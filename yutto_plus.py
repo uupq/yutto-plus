@@ -350,16 +350,13 @@ class DownloadTask:
         try:
             # 1. 获取视频信息
             self.status = TaskStatus.EXTRACTING
-            print(f"🔍 [信息提取] 正在分析视频: {self.url}")
+            print(f"🔍 正在分析视频: {self.url}")
             
             async with BilibiliAPIClient(self.config.sessdata) as client:
                 self.video_info = await client.get_video_info(self.url)
                 
-                print(f"✅ [视频解析] 成功获取视频信息:")
-                print(f"    📰 标题: {self.video_info['title']}")
-                print(f"    👤 UP主: {self.video_info['uploader']}")
-                print(f"    🆔 BV号: {self.video_info['bvid']}")
-                print(f"    ⏰ 时长: {self.video_info['duration']} 秒")
+                print(f"✅ 视频解析成功: {self.video_info['title']}")
+                print(f"👤 UP主: {self.video_info['uploader']}")
                 
                 # 初始化输出目录和文件名
                 output_dir = Path(self.task_config.get('output_dir', self.config.default_output_dir))
@@ -404,27 +401,27 @@ class DownloadTask:
                 if require_audio:
                     self.selected_audio = self._select_best_audio(audios)
                 
-                print(f"🎯 [流选择] 已选择内容:")
+                print(f"🎯 流选择完成:")
                 if self.selected_video:
-                    print(f"    🎥 视频: {self.selected_video['codec'].upper()} {self.selected_video['width']}x{self.selected_video['height']}")
+                    print(f"    📹 视频: {self.selected_video['codec'].upper()} {self.selected_video['width']}x{self.selected_video['height']}")
                 if self.selected_audio:
                     print(f"    🔊 音频: {self.selected_audio['codec'].upper()} 质量:{self.selected_audio['quality']}")
                 
                 # 下载弹幕
                 if require_danmaku:
-                    print(f"📝 [弹幕下载] 正在下载弹幕...")
+                    print(f"📝 正在下载弹幕...")
                     self.danmaku_data = await client.get_danmaku(
                         self.video_info['aid'],
                         cid,
                         user_info
                     )
-                    print(f"✅ [弹幕下载] 弹幕下载完成 ({self.danmaku_data['source_type']} 格式)")
+                    print(f"✅ 弹幕下载完成 ({self.danmaku_data['source_type']} 格式)")
                 
                 # 下载封面
                 if require_cover:
-                    print(f"🖼️ [封面下载] 正在下载封面...")
+                    print(f"🖼️ 正在下载封面...")
                     self.cover_data = await client.get_cover_data(self.video_info['pic'])
-                    print(f"✅ [封面下载] 封面下载完成 ({len(self.cover_data)} 字节)")
+                    print(f"✅ 封面下载完成 ({len(self.cover_data)} 字节)")
                 
                 # 立即通知流信息可用
                 if self._stream_info_callback:
@@ -456,7 +453,7 @@ class DownloadTask:
                 
                 # 5. 完成
                 self.status = TaskStatus.COMPLETED
-                print(f"🎉 [下载完成] 所有内容已保存完毕")
+                print(f"🎉 下载完成")
                 
                 if self._completion_callback:
                     result_info = self._build_result_info()
@@ -465,7 +462,7 @@ class DownloadTask:
         except Exception as e:
             self.error_message = str(e)
             self.status = TaskStatus.FAILED
-            print(f"❌ [下载失败] {self.error_message}")
+            print(f"❌ 下载失败: {self.error_message}")
             if self._completion_callback:
                 self._completion_callback(False, None, self.error_message)
     
@@ -791,7 +788,7 @@ class DownloadTask:
                         last_speed_calc = current_time
         
         except Exception as e:
-            print(f"❌ [下载失败] 网络错误: {e}")
+            print(f"❌ 网络错误: {e}")
             # 如果下载失败，仍需要设置进度信息避免计算错误
             if stream_id not in self._stream_progress:
                 self._stream_progress[stream_id] = {
@@ -807,7 +804,7 @@ class DownloadTask:
     
     async def _merge_streams(self):
         """合并音视频流"""
-        print(f"🔄 [文件合并] 正在合并音视频...")
+        print(f"🔄 正在合并音视频...")
         
         # 检查是否为仅音频模式
         audio_only = self.task_config.get('audio_only', False)
@@ -815,7 +812,7 @@ class DownloadTask:
         
         if audio_only and len(self._temp_files) == 1:
             # 仅音频模式，需要转换格式
-            print(f"🎵 [音频模式] 转换为 {audio_format.upper()} 格式")
+            print(f"🎵 转换为 {audio_format.upper()} 格式")
             self.output_filepath = self._output_dir / f"{self._filename}.{audio_format}"
             
             # 获取音频比特率设置
@@ -846,9 +843,6 @@ class DownloadTask:
             # 添加其他优化参数
             cmd.extend(["-map", "0:a:0"])  # 只映射第一个音频流
             cmd.append(str(self.output_filepath))
-            
-            print(f"    🔧 FFmpeg 音频命令: {' '.join(cmd)}")
-            
         else:
             # 视频模式或多流模式
             output_format = self.task_config.get('output_format', self.config.default_output_format)
@@ -871,7 +865,7 @@ class DownloadTask:
             if len(available_files) == 1:
                 # 只有一个流，直接复制
                 cmd.extend(["-c", "copy", str(self.output_filepath)])
-                print(f"    📝 单流模式: 直接复制 {available_files[0].name}")
+                print(f"    📝 单流模式: 直接复制")
             else:
                 # 多个流，需要合并
                 cmd.extend([
@@ -880,8 +874,6 @@ class DownloadTask:
                     str(self.output_filepath)
                 ])
                 print(f"    📝 合并模式: 合并 {len(available_files)} 个流")
-            
-            print(f"    🔧 FFmpeg 命令: {' '.join(cmd)}")
         
         # 执行合并/转换
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -894,7 +886,7 @@ class DownloadTask:
             if temp_file.exists():
                 temp_file.unlink()
         
-        print(f"✅ [合并完成] 输出文件: {self.output_filepath}")
+        print(f"✅ 合并完成: {self.output_filepath.name}")
     
     def _get_quality_desc(self, quality_id: int) -> str:
         """获取画质描述"""
@@ -964,7 +956,7 @@ class DownloadTask:
     async def _save_additional_files(self):
         """保存弹幕和封面"""
         if self.danmaku_data:
-            print(f"📝 [弹幕保存] 正在保存弹幕...")
+            print(f"📝 正在保存弹幕...")
             
             # 根据弹幕数据类型和格式保存
             if self.danmaku_data['source_type'] == 'xml':
@@ -983,10 +975,10 @@ class DownloadTask:
                         with open(danmaku_path, 'wb') as f:
                             f.write(segment)
             
-            print(f"✅ [弹幕保存] 弹幕保存完成")
+            print(f"✅ 弹幕保存完成")
         
         if self.cover_data:
-            print(f"🖼️ [封面保存] 正在保存封面...")
+            print(f"🖼️ 正在保存封面...")
             # 从 URL 获取文件扩展名，默认为 jpg
             cover_ext = "jpg"
             if self.video_info.get('pic'):
@@ -997,36 +989,23 @@ class DownloadTask:
             cover_path = self._output_dir / f"{self._filename}.{cover_ext}"
             with open(cover_path, 'wb') as f:
                 f.write(self.cover_data)
-            print(f"✅ [封面保存] 封面保存完成 ({cover_path})")
+            print(f"✅ 封面保存完成: {cover_path.name}")
 
 
 class YuttoPlus:
     """主下载器类"""
     
     def __init__(self, **config):
-        """初始化下载器
-        
-        Args:
-            sessdata: B站 SESSDATA cookie
-            default_output_dir: 默认下载目录
-            default_quality: 默认视频质量
-            default_audio_quality: 默认音频质量
-            default_video_codec: 默认视频编码偏好
-            default_audio_codec: 默认音频编码偏好
-            default_output_format: 默认输出格式
-            overwrite: 是否覆盖已存在文件
-        """
+        """初始化下载器"""
         self.config = DownloadConfig(**config)
-        print(f"🚀 [初始化] YuttoPlus 已初始化")
-        print(f"    📁 输出目录: {self.config.default_output_dir}")
-        print(f"    🎥 默认画质: {self.config.default_quality}")
-        print(f"    🔊 默认音质: {self.config.default_audio_quality}")
+        print(f"🚀 YuttoPlus 已初始化")
+        print(f"📁 输出目录: {self.config.default_output_dir}")
         
         # 验证用户登录状态
         if self.config.sessdata:
             self._validate_user_info()
         else:
-            print("ℹ️ [登录状态] 未提供 SESSDATA，无法下载高清视频、字幕等资源")
+            print("ℹ️ 未提供 SESSDATA，无法下载高清视频等资源")
     
     def _validate_user_info(self):
         """验证用户信息（同步方法，用于初始化时调用）"""
@@ -1063,19 +1042,19 @@ class YuttoPlus:
                 user_info = result["user_info"]
                 if user_info["is_login"]:
                     if user_info["vip_status"]:
-                        print("🎖️ [登录状态] ✅ 成功以大会员身份登录～")
+                        print("🎖️ ✅ 成功以大会员身份登录")
                     else:
-                        print("👤 [登录状态] ✅ 登录成功，以非大会员身份登录")
-                        print("⚠️ [提示] 注意无法下载会员专享剧集和最高画质")
+                        print("👤 ✅ 登录成功，以非大会员身份登录")
+                        print("⚠️ 注意无法下载会员专享剧集和最高画质")
                 else:
-                    print("❌ [登录状态] SESSDATA 无效或已过期，请检查后重试")
+                    print("❌ SESSDATA 无效或已过期，请检查后重试")
             elif result["error"]:
-                print(f"⚠️ [登录状态] 验证失败: {result['error']}")
+                print(f"⚠️ 验证失败: {result['error']}")
             else:
-                print("⚠️ [登录状态] 验证超时，将继续使用提供的 SESSDATA")
+                print("⚠️ 验证超时，将继续使用提供的 SESSDATA")
                 
         except Exception as e:
-            print(f"⚠️ [登录状态] 验证过程出错: {e}")
+            print(f"⚠️ 验证过程出错: {e}")
     
     def create_download_task(self, url: str, **kwargs) -> DownloadTask:
         """创建下载任务
@@ -1087,8 +1066,8 @@ class YuttoPlus:
         Returns:
             DownloadTask: 下载任务实例
         """
-        print(f"📋 [创建任务] 目标URL: {url}")
+        print(f"📋 创建任务: {url}")
         if kwargs:
-            print(f"    ⚙️  任务配置: {kwargs}")
+            print(f"⚙️ 任务配置: {kwargs}")
         
         return DownloadTask(url, self.config, kwargs) 
