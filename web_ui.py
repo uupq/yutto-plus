@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YuttoDownloader Web UI
+yutto-plus Web UI
 基于新的纯 API 实现的 Web 界面
 """
 
@@ -8,14 +8,14 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 import json
 from pathlib import Path
-from yutto_downloader import YuttoDownloader, TaskStatus
+from yutto_plus import YuttoPlus, TaskStatus
 import socket
 import webbrowser
 import threading
 import time
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'yutto_downloader_secret'
+app.config['SECRET_KEY'] = 'yutto_plus_secret'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # 全局下载器实例
@@ -25,7 +25,7 @@ active_tasks = {}
 def init_downloader():
     """初始化下载器"""
     global downloader
-    downloader = YuttoDownloader(
+    downloader = YuttoPlus(
         default_output_dir="/Users/sauterne/Downloads/Bilibili",
         default_quality=80,  # 1080P
         default_audio_quality=30280,  # 320kbps
@@ -186,7 +186,7 @@ def handle_get_video_info(data):
         
         # 创建临时任务来获取信息
         import asyncio
-        from yutto_downloader import BilibiliAPIClient
+        from yutto_plus import BilibiliAPIClient
         
         async def get_info():
             async with BilibiliAPIClient() as client:
@@ -266,7 +266,7 @@ def open_browser_delayed(url, delay=2):
     webbrowser.open(url)
 
 if __name__ == "__main__":
-    print("🚀 [启动] YuttoDownloader Web UI 正在启动...")
+    print("🚀 [启动] yutto-plus Web UI 正在启动...")
     
     # 查找可用端口
     port = find_available_port(12001)

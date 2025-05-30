@@ -1,3 +1,6 @@
 test_downloads/
 __pycache__/
 test_*.py
+Downloads/
+tests/
+*.mp4
