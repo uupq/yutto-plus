@@ -181,11 +181,16 @@ class DownloadTask:
         self._total_size = 0  # 所有流的总大小
         self._last_report_time = 0  # 上次报告时间
         
+        # 流信息回调
+        self._stream_info_callback = None
+        
     def start(self, progress_callback: Optional[Callable] = None, 
-              completion_callback: Optional[Callable] = None):
+              completion_callback: Optional[Callable] = None,
+              stream_info_callback: Optional[Callable] = None):
         """开始下载"""
         self._progress_callback = progress_callback
         self._completion_callback = completion_callback
+        self._stream_info_callback = stream_info_callback
         
         # 启动下载线程
         self._start_download_thread()
@@ -282,12 +287,24 @@ class DownloadTask:
                 if self.selected_audio:
                     print(f"    🔊 音频: {self.selected_audio['codec'].upper()} 质量:{self.selected_audio['quality']}")
                 
+                # 立即通知流信息可用
+                if self._stream_info_callback:
+                    stream_info = self.get_selected_streams_info()
+                    if stream_info:
+                        self._stream_info_callback(stream_info)
+                
                 # 2. 开始下载
                 self.status = TaskStatus.DOWNLOADING
                 await self._download_streams(client)
                 
                 # 3. 合并文件
                 self.status = TaskStatus.MERGING
+                
+                # 通知合并状态
+                if self._stream_info_callback:
+                    # 重用 stream_info_callback 来发送状态更新
+                    self._stream_info_callback({'status': 'merging', 'message': '正在合并音视频...'})
+                
                 await self._merge_streams()
                 
                 # 4. 完成

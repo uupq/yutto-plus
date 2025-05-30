@@ -392,7 +392,7 @@
 
             // 禁用按钮
             downloadBtn.disabled = true;
-            downloadBtn.textContent = '📥 准备下载...';
+            downloadBtn.textContent = '📋 准备中...';
             downloadBtn.classList.add('downloading');
 
             // 显示进度区域
@@ -420,6 +420,22 @@
             currentTaskId = data.task_id;
             showAlert(`下载任务已启动: ${data.url}`, 'info');
             updateProgress(0, '正在获取视频信息...', '-');
+            
+            // 更新按钮状态为准备中
+            downloadBtn.textContent = '📋 准备中...';
+        });
+
+        socket.on('status_update', function(data) {
+            if (data.task_id === currentTaskId) {
+                // 根据状态更新按钮文本
+                if (data.status === 'downloading') {
+                    downloadBtn.textContent = '📥 正在下载...';
+                    updateProgress(0, data.message, '-');
+                } else if (data.status === 'merging') {
+                    downloadBtn.textContent = '🔄 合并中...';
+                    updateProgress(100, '正在合并音视频...', '-');
+                }
+            }
         });
 
         socket.on('video_info', function(data) {

@@ -9,6 +9,10 @@ from flask_socketio import SocketIO, emit
 import json
 from pathlib import Path
 from yutto_downloader import YuttoDownloader, TaskStatus
+import socket
+import webbrowser
+import threading
+import time
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'yutto_downloader_secret'
@@ -86,6 +90,31 @@ def handle_download_request(data):
                 'item_name': item_name
             }, room=session_id)
         
+        def on_stream_info(stream_info):
+            """流信息回调 - 在流选择完成后立即调用，也用于状态更新"""
+            # 检查是否是状态更新消息
+            if 'status' in stream_info:
+                socketio.emit('status_update', {
+                    'task_id': task_id,
+                    'status': stream_info['status'],
+                    'message': stream_info.get('message', '')
+                }, room=session_id)
+                print(f'📡 [状态更新] 任务 {task_id} 状态: {stream_info["status"]}')
+            else:
+                # 正常的流信息
+                socketio.emit('stream_info', {
+                    'task_id': task_id,
+                    'streams': stream_info
+                }, room=session_id)
+                
+                # 同时更新状态为正在下载
+                socketio.emit('status_update', {
+                    'task_id': task_id,
+                    'status': 'downloading',
+                    'message': '正在下载...'
+                }, room=session_id)
+                print(f'📡 [流信息] 任务 {task_id} 流信息已发送')
+        
         def on_completion(success, result_info, error_message):
             """完成回调"""
             if success:
@@ -125,6 +154,7 @@ def handle_download_request(data):
         # 启动下载
         task.start(
             progress_callback=on_progress,
+            stream_info_callback=on_stream_info,
             completion_callback=on_completion
         )
         
@@ -217,12 +247,42 @@ def handle_get_task_status(data):
     else:
         emit('error', {'message': f'任务 {task_id} 不存在'})
 
+def find_available_port(start_port=12001):
+    """查找可用端口，从 start_port 开始"""
+    port = start_port
+    while port < 65535:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('localhost', port))
+                return port
+        except OSError:
+            port += 1
+    raise RuntimeError("无法找到可用端口")
+
+def open_browser_delayed(url, delay=2):
+    """延迟打开浏览器"""
+    time.sleep(delay)
+    print(f"🌐 [浏览器] 正在打开 {url}")
+    webbrowser.open(url)
+
 if __name__ == "__main__":
     print("🚀 [启动] YuttoDownloader Web UI 正在启动...")
+    
+    # 查找可用端口
+    port = find_available_port(12001)
+    print(f"🔌 [端口] 找到可用端口: {port}")
+    
     print("📁 [输出] 默认下载目录: /Users/sauterne/Downloads/Bilibili")
     
     # 初始化下载器
     init_downloader()
     
-    print("🌐 [服务] 访问 http://localhost:15430 来使用界面")
-    socketio.run(app, host='0.0.0.0', port=15430, debug=True) 
+    # 构建访问 URL
+    url = f"http://localhost:{port}"
+    print(f"🌐 [服务] 访问 {url} 来使用界面")
+    
+    # 延迟打开浏览器，给服务器时间启动
+    browser_thread = threading.Thread(target=open_browser_delayed, args=(url, 3), daemon=True)
+    browser_thread.start()
+    
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)  # 关闭 debug 模式避免重启 
