@@ -11,20 +11,337 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import subprocess
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 
 class TaskStatus(Enum):
     """任务状态枚举"""
-    PENDING = "pending"
-    EXTRACTING = "extracting"
-    DOWNLOADING = "downloading"
-    MERGING = "merging"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    PENDING = "pending"       # 等待中
+    QUEUED = "queued"         # 已排队
+    EXTRACTING = "extracting" # 信息提取中
+    DOWNLOADING = "downloading" # 下载中
+    MERGING = "merging"       # 合并中
+    COMPLETED = "completed"   # 已完成
+    FAILED = "failed"         # 失败
+    PAUSED = "paused"         # 已暂停
+    CANCELLED = "cancelled"   # 已取消
+
+
+@dataclass
+class TaskProgressInfo:
+    """任务进度信息"""
+    task_id: str
+    status: TaskStatus
+    video_info: Optional[Dict] = None
+    progress_percentage: float = 0.0
+    current_bytes: int = 0
+    total_bytes: int = 0
+    download_speed: float = 0.0
+    eta_seconds: int = 0
+    selected_streams: Optional[Dict] = None
+    error_message: Optional[str] = None
+
+
+@dataclass
+class OverallProgressInfo:
+    """整体进度信息"""
+    total_tasks: int
+    pending_tasks: int
+    running_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    overall_progress: float
+    total_speed: float
+    eta_seconds: int
+
+
+class TaskManager:
+    """任务管理器 - 负责任务队列管理和调度"""
+    
+    def __init__(self, max_concurrent: int):
+        self.max_concurrent = max_concurrent
+        self.pending_queue = deque()          # 等待队列: (task_id, DownloadTask)
+        self.running_tasks = {}              # 正在执行的任务: {task_id: DownloadTask}
+        self.completed_tasks = {}            # 已完成任务: {task_id: (success, result_info, error)}
+        self.failed_tasks = {}               # 失败任务: {task_id: error_message}
+        self.paused_tasks = {}               # 暂停任务: {task_id: DownloadTask}
+        self.thread_pool = ThreadPoolExecutor(max_workers=max_concurrent)
+        self._lock = threading.Lock()        # 线程安全锁
+        
+    def add_task(self, task_id: str, download_task: 'DownloadTask'):
+        """添加任务到队列"""
+        with self._lock:
+            self.pending_queue.append((task_id, download_task))
+            print(f"📋 任务已添加到队列: {task_id}")
+    
+    def start_next_task(self) -> bool:
+        """启动下一个等待的任务，返回是否启动了新任务"""
+        with self._lock:
+            return self._start_next_task_unlocked()
+    
+    def _start_next_task_unlocked(self) -> bool:
+        """内部方法：启动下一个等待的任务（不获取锁）"""
+        # 检查是否还有并发容量
+        if len(self.running_tasks) >= self.max_concurrent:
+            return False
+        
+        # 检查是否有等待的任务
+        if not self.pending_queue:
+            return False
+        
+        # 取出下一个任务
+        task_id, download_task = self.pending_queue.popleft()
+        self.running_tasks[task_id] = download_task
+        
+        # 更新任务状态为已排队
+        download_task.status = TaskStatus.QUEUED
+        
+        print(f"🚀 启动任务: {task_id}")
+        return True
+    
+    def on_task_completed(self, task_id: str, success: bool, result_info: Dict = None, error: str = None):
+        """任务完成回调"""
+        with self._lock:
+            if task_id in self.running_tasks:
+                download_task = self.running_tasks.pop(task_id)
+                
+                if success:
+                    self.completed_tasks[task_id] = (success, result_info, error)
+                    print(f"✅ 任务完成: {task_id}")
+                else:
+                    self.failed_tasks[task_id] = error
+                    print(f"❌ 任务失败: {task_id} - {error}")
+                
+                # 尝试启动下一个任务 (使用内部方法避免死锁)
+                if self._start_next_task_unlocked():
+                    # 如果成功启动了新任务，需要实际启动它
+                    # 获取刚启动的任务
+                    for new_task_id, new_download_task in list(self.running_tasks.items()):
+                        if new_download_task.status == TaskStatus.QUEUED:
+                            # 启动这个任务
+                            new_download_task.start()
+                            break
+    
+    def get_queue_status(self) -> Dict:
+        """获取队列状态统计"""
+        with self._lock:
+            return {
+                'pending': len(self.pending_queue),
+                'running': len(self.running_tasks),
+                'completed': len(self.completed_tasks),
+                'failed': len(self.failed_tasks),
+                'paused': len(self.paused_tasks),
+                'total': len(self.pending_queue) + len(self.running_tasks) + len(self.completed_tasks) + len(self.failed_tasks)
+            }
+    
+    def pause_task(self, task_id: str) -> bool:
+        """暂停指定任务"""
+        with self._lock:
+            if task_id in self.running_tasks:
+                download_task = self.running_tasks.pop(task_id)
+                self.paused_tasks[task_id] = download_task
+                download_task.status = TaskStatus.PAUSED
+                # TODO: 实现任务暂停逻辑
+                return True
+            return False
+    
+    def resume_task(self, task_id: str) -> bool:
+        """恢复指定任务"""
+        with self._lock:
+            if task_id in self.paused_tasks:
+                download_task = self.paused_tasks.pop(task_id)
+                self.pending_queue.appendleft((task_id, download_task))
+                return True
+            return False
+    
+    def get_running_tasks(self) -> Dict[str, 'DownloadTask']:
+        """获取当前运行的任务"""
+        with self._lock:
+            return self.running_tasks.copy()
+    
+    def shutdown(self):
+        """关闭任务管理器"""
+        self.thread_pool.shutdown(wait=True)
+
+
+class ProgressMonitor:
+    """进度监控器 - 负责多任务进度显示"""
+    
+    def __init__(self, max_tasks_display: int = 3):
+        self.max_tasks_display = max_tasks_display
+        self.display_mode = 'table'  # 'table' | 'simple' | 'silent'
+        self.last_update_time = 0
+        self.update_interval = 0.5  # 更新间隔(秒)
+        
+        # 显示状态
+        self._last_display_lines = 0  # 上次显示的行数
+        self._first_display = True    # 是否为第一次显示
+    
+    def set_display_mode(self, mode: str):
+        """设置显示模式"""
+        if mode in ['table', 'simple', 'silent']:
+            self.display_mode = mode
+        else:
+            raise ValueError(f"不支持的显示模式: {mode}")
+    
+    def should_update(self) -> bool:
+        """判断是否应该更新显示"""
+        import time
+        current_time = time.time()
+        if current_time - self.last_update_time >= self.update_interval:
+            self.last_update_time = current_time
+            return True
+        return False
+    
+    def update_progress(self, tasks_progress: Dict[str, TaskProgressInfo], overall_progress: OverallProgressInfo):
+        """更新进度显示"""
+        if self.display_mode == 'silent':
+            return
+        
+        if not self.should_update():
+            return
+        
+        if self.display_mode == 'table':
+            self._display_table_refresh(tasks_progress, overall_progress)
+        elif self.display_mode == 'simple':
+            self._display_simple(tasks_progress, overall_progress)
+    
+    def _clear_previous_display(self):
+        """清除之前的显示内容"""
+        if not self._first_display and self._last_display_lines > 0:
+            # 向上移动光标并清除行
+            for _ in range(self._last_display_lines):
+                print('\033[A\033[K', end='')
+        self._first_display = False
+    
+    def _display_table_refresh(self, tasks_progress: Dict[str, TaskProgressInfo], overall_progress: OverallProgressInfo):
+        """表格模式显示（刷新式）"""
+        # 清除之前的显示
+        self._clear_previous_display()
+        
+        display_lines = []  # 收集要显示的所有行
+        
+        # 显示整体状态
+        status_line = (f"📊 整体状态: {overall_progress.completed_tasks}/{overall_progress.total_tasks} 完成 | "
+                      f"运行中: {overall_progress.running_tasks} | "
+                      f"总进度: {overall_progress.overall_progress:.1f}% | "
+                      f"速度: {overall_progress.total_speed/(1024*1024):.2f} MB/s")
+        display_lines.append(status_line)
+        
+        if overall_progress.eta_seconds > 0:
+            eta_min, eta_sec = divmod(overall_progress.eta_seconds, 60)
+            eta_line = f"⏱️  预计剩余时间: {eta_min:02d}:{eta_sec:02d}"
+            display_lines.append(eta_line)
+        
+        # 筛选活跃任务（只显示正在进行的任务）
+        active_tasks = {
+            task_id: progress for task_id, progress in tasks_progress.items()
+            if progress.status in [TaskStatus.QUEUED, TaskStatus.EXTRACTING, 
+                                 TaskStatus.DOWNLOADING, TaskStatus.MERGING]
+        }
+        
+        # 显示任务表格（只显示活跃任务）
+        if active_tasks:
+            display_lines.append("")  # 空行
+            display_lines.append("📋 正在进行的任务:")
+            
+            # 根据实际任务数量调整表格大小
+            task_count = len(active_tasks)
+            display_count = min(task_count, self.max_tasks_display)
+            
+            # 表格头部
+            display_lines.append("┌─" + "─" * 10 + "┬─" + "─" * 35 + "┬─" + "─" * 10 + "┬─" + "─" * 18 + "┐")
+            display_lines.append("│ 任务ID     │ 标题                            │ 状态       │ 进度               │")
+            display_lines.append("├─" + "─" * 10 + "┼─" + "─" * 35 + "┼─" + "─" * 10 + "┼─" + "─" * 18 + "┤")
+            
+            # 显示任务行
+            active_items = list(active_tasks.items())[:display_count]
+            for task_id, progress in active_items:
+                # 截断任务标题
+                title = "未知标题"
+                if progress.video_info and 'title' in progress.video_info:
+                    title = progress.video_info['title'][:33]
+                
+                # 状态显示
+                status_icons = {
+                    TaskStatus.QUEUED: "📋 排队",
+                    TaskStatus.EXTRACTING: "🔍 分析",
+                    TaskStatus.DOWNLOADING: "📥 下载",
+                    TaskStatus.MERGING: "🔄 合并"
+                }
+                status_display = status_icons.get(progress.status, str(progress.status.value))
+                
+                # 进度显示
+                if progress.status == TaskStatus.DOWNLOADING and progress.total_bytes > 0:
+                    progress_text = f"{progress.progress_percentage:5.1f}%"
+                    speed_text = f"{progress.download_speed/(1024*1024):5.1f}MB/s"
+                    progress_display = f"{progress_text} {speed_text}"
+                else:
+                    progress_display = f"{progress.progress_percentage:5.1f}%"
+                
+                task_line = f"│ {task_id:<10} │ {title:<35} │ {status_display:<10} │ {progress_display:<18} │"
+                display_lines.append(task_line)
+            
+            # 表格底部
+            display_lines.append("└─" + "─" * 10 + "┴─" + "─" * 35 + "┴─" + "─" * 10 + "┴─" + "─" * 18 + "┘")
+        
+        # 如果没有活跃任务，显示处理中状态
+        elif overall_progress.running_tasks == 0 and overall_progress.pending_tasks == 0:
+            if overall_progress.total_tasks > 0:
+                display_lines.append("")
+                display_lines.append("✅ 所有任务已完成!")
+        
+        # 输出所有行
+        for line in display_lines:
+            print(line)
+        
+        # 记录显示的行数
+        self._last_display_lines = len(display_lines)
+    
+    def _display_table(self, tasks_progress: Dict[str, TaskProgressInfo], overall_progress: OverallProgressInfo):
+        """原有的表格模式显示（兼容性保留）"""
+        # 重定向到新的刷新式显示
+        self._display_table_refresh(tasks_progress, overall_progress)
+    
+    def _display_simple(self, tasks_progress: Dict[str, TaskProgressInfo], overall_progress: OverallProgressInfo):
+        """简单模式显示"""
+        print(f"📊 总进度: {overall_progress.overall_progress:.1f}% | "
+              f"完成: {overall_progress.completed_tasks}/{overall_progress.total_tasks} | "
+              f"速度: {overall_progress.total_speed/(1024*1024):.2f} MB/s")
+        
+        # 显示运行中的任务
+        running_tasks = [(tid, prog) for tid, prog in tasks_progress.items() 
+                        if prog.status in [TaskStatus.DOWNLOADING, TaskStatus.EXTRACTING, TaskStatus.MERGING]]
+        
+        for task_id, progress in running_tasks[:2]:  # 最多显示2个运行中的任务
+            title = "未知"
+            if progress.video_info and 'title' in progress.video_info:
+                title = progress.video_info['title'][:30]
+            
+            status_icon = "📥" if progress.status == TaskStatus.DOWNLOADING else "🔍"
+            print(f"  {status_icon} {task_id}: {title} ({progress.progress_percentage:.1f}%)")
+    
+    def display_completion_summary(self, final_status: Dict, elapsed_time: float):
+        """显示完成总结"""
+        # 清除之前的显示
+        self._clear_previous_display()
+        
+        print("=" * 60)
+        print("🎉 所有任务已完成!")
+        print(f"⏱️  总用时: {elapsed_time:.1f} 秒")
+        print(f"📊 结果统计:")
+        print(f"   ✅ 成功: {final_status.get('completed', 0)}")
+        print(f"   ❌ 失败: {final_status.get('failed', 0)}")
+        print(f"   📊 总计: {final_status.get('total', 0)}")
+        
+        # 重置显示状态
+        self._last_display_lines = 0
+        self._first_display = True
 
 
 @dataclass
@@ -247,10 +564,14 @@ class BilibiliAPIClient:
 class DownloadTask:
     """单个下载任务"""
     
-    def __init__(self, url: str, config: DownloadConfig, task_config: Dict[str, Any] = None):
+    def __init__(self, url: str, config: DownloadConfig, task_config: Dict[str, Any] = None, 
+                 task_id: str = None, parent_manager = None, silent_mode: bool = False):
         self.url = url
         self.config = config
         self.task_config = task_config or {}
+        self.task_id = task_id or f"task_{int(time.time())}"
+        self.parent_manager = parent_manager  # 指向 YuttoPlus
+        self.silent_mode = silent_mode       # 是否静默（不直接输出）
         self.status = TaskStatus.PENDING
         
         # 任务信息
@@ -277,6 +598,28 @@ class DownloadTask:
         # 流信息回调
         self._stream_info_callback = None
         
+    def _print_if_not_silent(self, message: str):
+        """只在非静默模式下输出"""
+        if not self.silent_mode:
+            print(message)
+    
+    def _report_progress(self, progress_info: Dict):
+        """向父管理器报告进度"""
+        if self.parent_manager:
+            self.parent_manager.on_task_progress(self.task_id, progress_info)
+            
+    def _report_status_change(self, new_status: TaskStatus):
+        """报告状态变化"""
+        old_status = self.status
+        self.status = new_status
+        if self.parent_manager:
+            self.parent_manager.on_task_status_change(self.task_id, old_status, new_status)
+            
+    def _report_completion(self, success: bool, result_info: Dict = None, error: str = None):
+        """报告任务完成"""
+        if self.parent_manager:
+            self.parent_manager.on_task_completed(self.task_id, success, result_info, error)
+    
     def start(self, progress_callback: Optional[Callable] = None, 
               completion_callback: Optional[Callable] = None,
               stream_info_callback: Optional[Callable] = None):
@@ -319,6 +662,16 @@ class DownloadTask:
         # 限制报告频率（每0.5秒最多报告一次）
         current_time = time.time()
         if current_time - self._last_report_time >= 0.5:
+            # 向父管理器报告进度
+            if self.parent_manager:
+                progress_info = {
+                    'current_bytes': total_current,
+                    'total_bytes': total_size,
+                    'speed_bps': total_speed
+                }
+                self._report_progress(progress_info)
+            
+            # 原有的回调
             if self._progress_callback and total_size > 0:
                 # 确保进度不超过100%
                 progress_percentage = min(100.0, (total_current / total_size * 100))
@@ -349,14 +702,14 @@ class DownloadTask:
         """异步下载实现"""
         try:
             # 1. 获取视频信息
-            self.status = TaskStatus.EXTRACTING
-            print(f"🔍 正在分析视频: {self.url}")
+            self._report_status_change(TaskStatus.EXTRACTING)
+            self._print_if_not_silent(f"🔍 正在分析视频: {self.url}")
             
             async with BilibiliAPIClient(self.config.sessdata) as client:
                 self.video_info = await client.get_video_info(self.url)
                 
-                print(f"✅ 视频解析成功: {self.video_info['title']}")
-                print(f"👤 UP主: {self.video_info['uploader']}")
+                self._print_if_not_silent(f"✅ 视频解析成功: {self.video_info['title']}")
+                self._print_if_not_silent(f"👤 UP主: {self.video_info['uploader']}")
                 
                 # 初始化输出目录和文件名
                 output_dir = Path(self.task_config.get('output_dir', self.config.default_output_dir))
@@ -401,27 +754,27 @@ class DownloadTask:
                 if require_audio:
                     self.selected_audio = self._select_best_audio(audios)
                 
-                print(f"🎯 流选择完成:")
+                self._print_if_not_silent(f"🎯 流选择完成:")
                 if self.selected_video:
-                    print(f"    📹 视频: {self.selected_video['codec'].upper()} {self.selected_video['width']}x{self.selected_video['height']}")
+                    self._print_if_not_silent(f"    📹 视频: {self.selected_video['codec'].upper()} {self.selected_video['width']}x{self.selected_video['height']}")
                 if self.selected_audio:
-                    print(f"    🔊 音频: {self.selected_audio['codec'].upper()} 质量:{self.selected_audio['quality']}")
+                    self._print_if_not_silent(f"    🔊 音频: {self.selected_audio['codec'].upper()} 质量:{self.selected_audio['quality']}")
                 
                 # 下载弹幕
                 if require_danmaku:
-                    print(f"📝 正在下载弹幕...")
+                    self._print_if_not_silent(f"📝 正在下载弹幕...")
                     self.danmaku_data = await client.get_danmaku(
                         self.video_info['aid'],
                         cid,
                         user_info
                     )
-                    print(f"✅ 弹幕下载完成 ({self.danmaku_data['source_type']} 格式)")
+                    self._print_if_not_silent(f"✅ 弹幕下载完成 ({self.danmaku_data['source_type']} 格式)")
                 
                 # 下载封面
                 if require_cover:
-                    print(f"🖼️ 正在下载封面...")
+                    self._print_if_not_silent(f"🖼️ 正在下载封面...")
                     self.cover_data = await client.get_cover_data(self.video_info['pic'])
-                    print(f"✅ 封面下载完成 ({len(self.cover_data)} 字节)")
+                    self._print_if_not_silent(f"✅ 封面下载完成 ({len(self.cover_data)} 字节)")
                 
                 # 立即通知流信息可用
                 if self._stream_info_callback:
@@ -431,11 +784,11 @@ class DownloadTask:
                 
                 # 2. 开始下载媒体文件
                 if require_video or require_audio:
-                    self.status = TaskStatus.DOWNLOADING
+                    self._report_status_change(TaskStatus.DOWNLOADING)
                     await self._download_streams(client)
                     
                     # 3. 合并文件
-                    self.status = TaskStatus.MERGING
+                    self._report_status_change(TaskStatus.MERGING)
                     
                     # 通知合并状态
                     if self._stream_info_callback:
@@ -452,17 +805,24 @@ class DownloadTask:
                 await self._save_additional_files()
                 
                 # 5. 完成
-                self.status = TaskStatus.COMPLETED
-                print(f"🎉 下载完成")
+                self._report_status_change(TaskStatus.COMPLETED)
+                self._print_if_not_silent(f"🎉 下载完成")
+                
+                # 通知完成
+                result_info = self._build_result_info()
+                self._report_completion(True, result_info, None)
                 
                 if self._completion_callback:
-                    result_info = self._build_result_info()
                     self._completion_callback(True, result_info, None)
                     
         except Exception as e:
             self.error_message = str(e)
             self.status = TaskStatus.FAILED
-            print(f"❌ 下载失败: {self.error_message}")
+            self._print_if_not_silent(f"❌ 下载失败: {self.error_message}")
+            
+            # 通知失败
+            self._report_completion(False, None, self.error_message)
+            
             if self._completion_callback:
                 self._completion_callback(False, None, self.error_message)
     
@@ -995,10 +1355,21 @@ class DownloadTask:
 class YuttoPlus:
     """主下载器类"""
     
-    def __init__(self, **config):
+    def __init__(self, max_concurrent: int = 3, **config):
         """初始化下载器"""
         self.config = DownloadConfig(**config)
-        print(f"🚀 YuttoPlus 已初始化")
+        
+        # 并行管理
+        self.max_concurrent = max_concurrent
+        self.task_manager = TaskManager(max_concurrent)
+        self.active_tasks = {}                # {task_id: DownloadTask}
+        self.task_counter = 0                 # 任务ID计数器
+        
+        # 进度监控
+        self.progress_monitor = ProgressMonitor(max_tasks_display=max_concurrent)
+        self.tasks_progress = {}              # {task_id: TaskProgressInfo}
+        
+        print(f"🚀 YuttoPlus 已初始化 (并发数: {max_concurrent})")
         print(f"📁 输出目录: {self.config.default_output_dir}")
         
         # 验证用户登录状态
@@ -1057,7 +1428,7 @@ class YuttoPlus:
             print(f"⚠️ 验证过程出错: {e}")
     
     def create_download_task(self, url: str, **kwargs) -> DownloadTask:
-        """创建下载任务
+        """创建下载任务 (兼容原有API)
         
         Args:
             url: B站视频链接
@@ -1070,4 +1441,186 @@ class YuttoPlus:
         if kwargs:
             print(f"⚙️ 任务配置: {kwargs}")
         
-        return DownloadTask(url, self.config, kwargs) 
+        return DownloadTask(url, self.config, kwargs)
+    
+    def add_download_tasks(self, urls_with_configs: List[Tuple[str, Dict]]) -> List[str]:
+        """添加多个下载任务，返回任务ID列表"""
+        task_ids = []
+        
+        for url, task_config in urls_with_configs:
+            # 生成任务ID
+            self.task_counter += 1
+            task_id = f"task_{self.task_counter:03d}"
+            
+            # 创建任务
+            download_task = DownloadTask(
+                url=url,
+                config=self.config,
+                task_config=task_config,
+                task_id=task_id,
+                parent_manager=self,
+                silent_mode=True  # 并行模式下默认静默
+            )
+            
+            # 添加到活跃任务和任务管理器
+            self.active_tasks[task_id] = download_task
+            self.task_manager.add_task(task_id, download_task)
+            task_ids.append(task_id)
+        
+        print(f"📊 已添加 {len(task_ids)} 个任务到队列")
+        return task_ids
+    
+    def start_parallel_download(self, display_mode: str = 'auto') -> None:
+        """开始并行下载"""
+        print(f"🚀 开始并行下载 (显示模式: {display_mode})")
+        
+        # 设置显示模式
+        if display_mode == 'auto':
+            # 根据任务数量自动选择
+            total_tasks = len(self.active_tasks)
+            if total_tasks <= 1:
+                self.progress_monitor.set_display_mode('simple')
+            elif total_tasks <= 3:
+                self.progress_monitor.set_display_mode('table')
+            else:
+                self.progress_monitor.set_display_mode('simple')
+        else:
+            self.progress_monitor.set_display_mode(display_mode)
+        
+        # 启动初始任务
+        started_count = 0
+        for _ in range(self.max_concurrent):
+            if self.task_manager.start_next_task():
+                started_count += 1
+        
+        print(f"📥 启动了 {started_count} 个初始任务")
+        
+        # 开始执行启动的任务
+        for task_id, download_task in self.task_manager.get_running_tasks().items():
+            download_task.start()
+        
+        print()  # 为进度显示留空行
+    
+    def on_task_progress(self, task_id: str, progress_info: Dict):
+        """任务进度回调"""
+        # 更新任务进度信息
+        if task_id in self.tasks_progress:
+            task_progress = self.tasks_progress[task_id]
+            # 更新下载进度
+            if 'current_bytes' in progress_info:
+                task_progress.current_bytes = progress_info['current_bytes']
+            if 'total_bytes' in progress_info:
+                task_progress.total_bytes = progress_info['total_bytes']
+            if 'speed_bps' in progress_info:
+                task_progress.download_speed = progress_info['speed_bps']
+            
+            # 计算进度百分比
+            if task_progress.total_bytes > 0:
+                task_progress.progress_percentage = (task_progress.current_bytes / task_progress.total_bytes) * 100
+        
+        # 触发进度显示更新
+        self._update_progress_display()
+    
+    def on_task_status_change(self, task_id: str, old_status: TaskStatus, new_status: TaskStatus):
+        """任务状态变化回调"""
+        # 更新任务进度信息中的状态
+        if task_id not in self.tasks_progress:
+            # 创建新的进度信息
+            self.tasks_progress[task_id] = TaskProgressInfo(
+                task_id=task_id,
+                status=new_status
+            )
+        else:
+            self.tasks_progress[task_id].status = new_status
+        
+        # 如果任务有视频信息，更新到进度信息中
+        if task_id in self.active_tasks:
+            task = self.active_tasks[task_id]
+            if hasattr(task, 'video_info') and task.video_info:
+                self.tasks_progress[task_id].video_info = task.video_info
+        
+        # 输出状态变化（仅在非table模式下）
+        if self.progress_monitor.display_mode != 'table':
+            print(f"📌 任务 {task_id}: {old_status.value} → {new_status.value}")
+        
+        # 触发进度显示更新
+        self._update_progress_display()
+    
+    def on_task_completed(self, task_id: str, success: bool, result_info: Dict = None, error: str = None):
+        """任务完成回调"""
+        # 更新任务进度信息
+        if task_id in self.tasks_progress:
+            task_progress = self.tasks_progress[task_id]
+            if success:
+                task_progress.status = TaskStatus.COMPLETED
+                task_progress.progress_percentage = 100.0
+            else:
+                task_progress.status = TaskStatus.FAILED
+                task_progress.error_message = error
+        
+        # 通知任务管理器
+        self.task_manager.on_task_completed(task_id, success, result_info, error)
+        
+        # 从活跃任务中移除
+        if task_id in self.active_tasks:
+            del self.active_tasks[task_id]
+        
+        # 触发进度显示更新
+        self._update_progress_display()
+    
+    def _update_progress_display(self):
+        """更新进度显示"""
+        overall_progress = self.get_overall_progress()
+        self.progress_monitor.update_progress(self.tasks_progress, overall_progress)
+    
+    def get_overall_progress(self) -> OverallProgressInfo:
+        """获取整体进度信息"""
+        queue_status = self.task_manager.get_queue_status()
+        
+        # 计算整体进度和速度
+        total_progress = 0.0
+        total_speed = 0.0
+        total_bytes = 0
+        current_bytes = 0
+        
+        for task in self.active_tasks.values():
+            if hasattr(task, '_stream_progress') and task._stream_progress:
+                for progress in task._stream_progress.values():
+                    current_bytes += progress['current']
+                    total_bytes += progress['total']
+                    total_speed += progress['speed']
+        
+        if total_bytes > 0:
+            total_progress = (current_bytes / total_bytes) * 100
+        
+        # 估算剩余时间
+        eta_seconds = 0
+        if total_speed > 0 and total_bytes > current_bytes:
+            eta_seconds = int((total_bytes - current_bytes) / total_speed)
+        
+        return OverallProgressInfo(
+            total_tasks=queue_status['total'],
+            pending_tasks=queue_status['pending'],
+            running_tasks=queue_status['running'],
+            completed_tasks=queue_status['completed'],
+            failed_tasks=queue_status['failed'],
+            overall_progress=total_progress,
+            total_speed=total_speed,
+            eta_seconds=eta_seconds
+        )
+    
+    def pause_all_tasks(self) -> None:
+        """暂停所有任务"""
+        # TODO: 实现暂停逻辑
+        print("⏸️ 暂停所有任务功能待实现")
+    
+    def resume_all_tasks(self) -> None:
+        """恢复所有任务"""
+        # TODO: 实现恢复逻辑
+        print("▶️ 恢复所有任务功能待实现")
+    
+    def shutdown(self):
+        """关闭下载器"""
+        print("🔚 正在关闭下载器...")
+        self.task_manager.shutdown()
+        print("✅ 下载器已关闭") 
