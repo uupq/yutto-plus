@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YuttoDownloader - B站视频下载器</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: #fff;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .info-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            border-left: 5px solid #667eea;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .progress-container {
+            margin-top: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-weight: 500;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .video-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .info-item .label {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .info-item .value {
+            color: #333;
+            word-break: break-all;
+        }
+
+        .stream-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+        }
+
+        .stream-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .stream-title::before {
+            content: "🎬";
+            margin-right: 8px;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 1000;
+        }
+
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .downloading {
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status disconnected" id="connectionStatus">
+        🔌 连接中...
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🚀 YuttoDownloader</h1>
+            <p>新一代 B站视频下载器 - 基于纯 API 实现</p>
+        </div>
+
+        <form id="downloadForm">
+            <div class="form-group">
+                <label for="videoUrl">📹 B站视频链接</label>
+                <input type="url" id="videoUrl" placeholder="https://www.bilibili.com/video/BV..." required>
+            </div>
+
+            <div class="form-group">
+                <label for="quality">🎯 视频质量</label>
+                <select id="quality">
+                    <option value="127">8K 超高清</option>
+                    <option value="120">4K 超清</option>
+                    <option value="116">1080P60 高帧率</option>
+                    <option value="80" selected>1080P 高清</option>
+                    <option value="64">720P 高清</option>
+                    <option value="32">480P 清晰</option>
+                    <option value="16">360P 流畅</option>
+                </select>
+            </div>
+
+            <button type="button" id="previewBtn" class="btn">🔍 预览视频信息</button>
+            <button type="submit" id="downloadBtn" class="btn">🚀 开始下载</button>
+        </form>
+
+        <div id="alertContainer"></div>
+
+        <!-- 视频信息预览 -->
+        <div id="videoInfoSection" class="info-section hidden">
+            <h3>📺 视频信息</h3>
+            <div class="video-info">
+                <div class="info-item">
+                    <div class="label">BV号</div>
+                    <div class="value" id="videoBvId">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="label">标题</div>
+                    <div class="value" id="videoTitle">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="label">UP主</div>
+                    <div class="value" id="videoUploader">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="label">时长</div>
+                    <div class="value" id="videoDuration">-</div>
+                </div>
+            </div>
+            <div id="videoDescription" style="margin-top: 15px; color: #666;"></div>
+        </div>
+
+        <!-- 流信息 -->
+        <div id="streamInfoSection" class="info-section hidden">
+            <h3>🎬 流信息</h3>
+            <div class="stream-info">
+                <div class="stream-title">选中的视频流</div>
+                <div id="selectedVideoStream">等待获取...</div>
+            </div>
+            <div class="stream-info">
+                <div class="stream-title">选中的音频流</div>
+                <div id="selectedAudioStream">等待获取...</div>
+            </div>
+        </div>
+
+        <!-- 下载进度 -->
+        <div id="progressSection" class="progress-container hidden">
+            <h3>📊 下载进度</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-info">
+                <span id="progressText">准备中...</span>
+                <span id="speedText">-</span>
+            </div>
+            <div id="currentItem" style="margin-top: 10px; color: #666; font-size: 14px;"></div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化 Socket.IO
+        const socket = io();
+
+        // DOM 元素
+        const downloadForm = document.getElementById('downloadForm');
+        const videoUrl = document.getElementById('videoUrl');
+        const quality = document.getElementById('quality');
+        const previewBtn = document.getElementById('previewBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const alertContainer = document.getElementById('alertContainer');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const videoInfoSection = document.getElementById('videoInfoSection');
+        const streamInfoSection = document.getElementById('streamInfoSection');
+        const progressSection = document.getElementById('progressSection');
+
+        // 当前任务ID
+        let currentTaskId = null;
+
+        // 连接状态管理
+        socket.on('connect', function() {
+            connectionStatus.textContent = '🟢 已连接';
+            connectionStatus.className = 'connection-status connected';
+            showAlert('WebSocket 连接成功', 'success');
+        });
+
+        socket.on('disconnect', function() {
+            connectionStatus.textContent = '🔴 连接断开';
+            connectionStatus.className = 'connection-status disconnected';
+            showAlert('WebSocket 连接断开', 'error');
+        });
+
+        // 预览视频信息
+        previewBtn.addEventListener('click', function() {
+            const url = videoUrl.value.trim();
+            if (!url) {
+                showAlert('请输入视频链接', 'error');
+                return;
+            }
+
+            previewBtn.disabled = true;
+            previewBtn.textContent = '🔍 获取中...';
+
+            socket.emit('get_video_info', { url: url });
+        });
+
+        // 下载表单提交
+        downloadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const url = videoUrl.value.trim();
+            const selectedQuality = parseInt(quality.value);
+
+            if (!url) {
+                showAlert('请输入视频链接', 'error');
+                return;
+            }
+
+            // 禁用按钮
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = '📥 准备下载...';
+            downloadBtn.classList.add('downloading');
+
+            // 显示进度区域
+            progressSection.classList.remove('hidden');
+            updateProgress(0, '准备下载...', '-');
+
+            // 发送下载请求
+            socket.emit('download_request', {
+                url: url,
+                quality: selectedQuality
+            });
+        });
+
+        // Socket 事件处理
+        socket.on('video_info_preview', function(data) {
+            updateVideoInfo(data);
+            videoInfoSection.classList.remove('hidden');
+            
+            previewBtn.disabled = false;
+            previewBtn.textContent = '🔍 预览视频信息';
+            showAlert('视频信息获取成功', 'success');
+        });
+
+        socket.on('download_started', function(data) {
+            currentTaskId = data.task_id;
+            showAlert(`下载任务已启动: ${data.url}`, 'info');
+            updateProgress(0, '正在获取视频信息...', '-');
+        });
+
+        socket.on('video_info', function(data) {
+            if (data.task_id === currentTaskId) {
+                updateVideoInfo(data);
+                videoInfoSection.classList.remove('hidden');
+            }
+        });
+
+        socket.on('stream_info', function(data) {
+            if (data.task_id === currentTaskId) {
+                updateStreamInfo(data.streams);
+                streamInfoSection.classList.remove('hidden');
+            }
+        });
+
+        socket.on('progress', function(data) {
+            if (data.task_id === currentTaskId) {
+                const percentage = data.percentage;
+                const speedText = `${data.speed_mbps.toFixed(2)} MB/s`;
+                const progressText = `${percentage.toFixed(1)}% (${(data.current_bytes / 1024 / 1024).toFixed(1)}/${(data.total_bytes / 1024 / 1024).toFixed(1)} MB)`;
+                
+                updateProgress(percentage, progressText, speedText);
+                document.getElementById('currentItem').textContent = data.item_name;
+            }
+        });
+
+        socket.on('download_complete', function(data) {
+            if (data.task_id === currentTaskId) {
+                if (data.success) {
+                    showAlert(`✅ 下载完成！文件保存到: ${data.result.output_filepath}`, 'success');
+                    updateProgress(100, '下载完成！', '-');
+                    
+                    // 显示流信息
+                    updateStreamInfo({
+                        selected_video_stream_info: data.result.selected_video_stream_info,
+                        selected_audio_stream_info: data.result.selected_audio_stream_info
+                    });
+                    streamInfoSection.classList.remove('hidden');
+                } else {
+                    showAlert(`❌ 下载失败: ${data.error}`, 'error');
+                    updateProgress(0, '下载失败', '-');
+                }
+                
+                // 重置按钮
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = '🚀 开始下载';
+                downloadBtn.classList.remove('downloading');
+                currentTaskId = null;
+            }
+        });
+
+        socket.on('error', function(data) {
+            showAlert(data.message, 'error');
+            
+            // 重置按钮
+            previewBtn.disabled = false;
+            previewBtn.textContent = '🔍 预览视频信息';
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = '🚀 开始下载';
+            downloadBtn.classList.remove('downloading');
+        });
+
+        // 辅助函数
+        function showAlert(message, type) {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            
+            alertContainer.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+
+        function updateVideoInfo(data) {
+            document.getElementById('videoBvId').textContent = data.bvid;
+            document.getElementById('videoTitle').textContent = data.title;
+            document.getElementById('videoUploader').textContent = data.uploader;
+            document.getElementById('videoDuration').textContent = data.duration ? `${data.duration} 秒` : '未知';
+            
+            if (data.description) {
+                document.getElementById('videoDescription').textContent = `简介: ${data.description}`;
+            }
+        }
+
+        function updateStreamInfo(streams) {
+            const videoStream = streams.selected_video_stream_info || '等待获取...';
+            const audioStream = streams.selected_audio_stream_info || '等待获取...';
+            
+            document.getElementById('selectedVideoStream').textContent = videoStream;
+            document.getElementById('selectedAudioStream').textContent = audioStream;
+        }
+
+        function updateProgress(percentage, progressText, speedText) {
+            document.getElementById('progressFill').style.width = `${percentage}%`;
+            document.getElementById('progressText').textContent = progressText;
+            document.getElementById('speedText').textContent = speedText;
+        }
+    </script>
+</body>
+</html> 
