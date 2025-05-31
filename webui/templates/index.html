@@ -1147,21 +1147,6 @@
             updateParallelProgress(0, '开始下载...', '-');
         });
 
-        socket.on('parallel_progress', function(data) {
-            const overall = data.overall;
-            const tasks = data.tasks;
-            
-            // 更新整体进度
-            updateParallelProgress(
-                overall.overall_progress,
-                `${overall.completed_tasks}/${overall.total_tasks} 完成`,
-                `${overall.total_speed.toFixed(1)} MB/s`
-            );
-            
-            // 更新任务列表
-            updateTaskList(tasks);
-        });
-
         socket.on('parallel_download_complete', function(data) {
             const final = data.final_status;
             
@@ -1178,6 +1163,35 @@
             
             // 显示完成状态
             updateParallelProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
+        });
+
+        socket.on('parallel_progress', function(data) {
+            const overall = data.overall;
+            const tasks = data.tasks;
+            
+            // 检查是否是单个下载（只有一个任务）
+            const taskIds = Object.keys(tasks);
+            if (taskIds.length === 1 && document.getElementById('singleTab').classList.contains('active')) {
+                // 这是单个下载，更新单个下载进度
+                const taskId = taskIds[0];
+                const task = tasks[taskId];
+                
+                updateSingleProgress(
+                    task.progress_percentage,
+                    `${task.title} - ${task.status}`,
+                    `${task.download_speed.toFixed(1)} MB/s`
+                );
+            } else {
+                // 这是并行下载，更新并行进度
+                updateParallelProgress(
+                    overall.overall_progress,
+                    `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                    `${overall.total_speed.toFixed(1)} MB/s`
+                );
+                
+                // 更新任务列表
+                updateTaskList(tasks);
+            }
         });
 
         socket.on('error', function(data) {
