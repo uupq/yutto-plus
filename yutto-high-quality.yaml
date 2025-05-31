@@ -1,0 +1,41 @@
+# YuttoPlus 高清视频配置文件
+# 适用场景: 下载8K/4K高清视频，收藏精品内容
+
+description: "高清视频下载配置 - 8K/4K收藏级"
+
+# === 基础设置 ===
+quality: 127          # 视频质量: 8K超高清 (需要大会员)
+audio_quality: 30251  # 音频质量: Hi-Res无损
+output_dir: "./HighQuality_Downloads"  # 输出目录
+format: "mkv"         # 输出格式: MKV支持更好的编码
+
+# === 并行设置 ===
+concurrent: 2         # 并发下载数量: 高清视频较大，适当降低并发
+parallel_display: "table"  # 显示模式
+
+# === 下载内容 ===
+audio_only: false     # 下载视频+音频
+no_video: false       
+no_danmaku: true      # 跳过弹幕，专注视频质量
+no_cover: true        # 跳过封面，节省空间
+
+# === 格式设置 ===
+video_codec: "hevc"   # 视频编码: HEVC(H.265)更高压缩比
+audio_format: "flac"  # 音频格式: FLAC无损
+audio_bitrate: "320k"
+
+# === 其他设置 ===
+overwrite: false      # 保护现有文件
+enable_resume: true   # 大文件必须支持断点续传
+quiet: false         
+verbose: true         # 显示详细信息，便于监控大文件下载
+
+# === 登录设置 ===
+# 高清下载通常需要大会员权限，请配置SESSDATA
+# sessdata: "你的SESSDATA"
+
+# === 质量说明 ===
+# 127: 8K 超高清 (需要大会员)
+# 120: 4K 超清 (需要大会员) 
+# 116: 1080P60 (60帧，需要大会员)
+# 112: 1080P+ (高码率1080P，需要大会员) 

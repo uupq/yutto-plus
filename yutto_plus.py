@@ -169,8 +169,57 @@ class TaskManager:
         self.thread_pool.shutdown(wait=True)
 
 
+def get_display_width(text):
+    """计算字符串的实际显示宽度（中文字符计为2，英文计为1）"""
+    width = 0
+    for char in text:
+        if ord(char) > 127:  # 非ASCII字符（包括中文、emoji等）
+            width += 2
+        else:
+            width += 1
+    return width
+
+def align_text(text, target_width, align='left'):
+    """正确对齐包含中英文混合的文本
+    
+    Args:
+        text: 要对齐的文本
+        target_width: 目标显示宽度
+        align: 对齐方式 ('left', 'right', 'center')
+    
+    Returns:
+        对齐后的文本
+    """
+    current_width = get_display_width(text)
+    
+    if current_width >= target_width:
+        # 截断过长的文本，需要考虑中英文混合的情况
+        truncated = ""
+        truncated_width = 0
+        for char in text:
+            char_width = 2 if ord(char) > 127 else 1
+            if truncated_width + char_width <= target_width:
+                truncated += char
+                truncated_width += char_width
+            else:
+                break
+        return truncated
+    
+    padding_needed = target_width - current_width
+    
+    if align == 'left':
+        return text + ' ' * padding_needed
+    elif align == 'right':
+        return ' ' * padding_needed + text
+    elif align == 'center':
+        left_padding = padding_needed // 2
+        right_padding = padding_needed - left_padding
+        return ' ' * left_padding + text + ' ' * right_padding
+    
+    return text
+
 class ProgressMonitor:
-    """进度监控器 - 负责多任务进度显示"""
+    """进度监控和显示管理"""
     
     def __init__(self, max_tasks_display: int = 3):
         self.max_tasks_display = max_tasks_display
@@ -220,32 +269,29 @@ class ProgressMonitor:
         self._first_display = False
     
     def _display_table_refresh(self, tasks_progress: Dict[str, TaskProgressInfo], overall_progress: OverallProgressInfo):
-        """表格模式显示（刷新式）"""
+        """表格模式显示（刷新式，避免界面跳动）"""
         # 清除之前的显示
         self._clear_previous_display()
         
-        display_lines = []  # 收集要显示的所有行
+        display_lines = []
         
-        # 显示整体状态
-        status_line = (f"📊 整体状态: {overall_progress.completed_tasks}/{overall_progress.total_tasks} 完成 | "
-                      f"运行中: {overall_progress.running_tasks} | "
-                      f"总进度: {overall_progress.overall_progress:.1f}% | "
-                      f"速度: {overall_progress.total_speed/(1024*1024):.2f} MB/s")
-        display_lines.append(status_line)
+        # 主进度行
+        display_lines.append(f"📊 整体状态: {overall_progress.completed_tasks}/{overall_progress.total_tasks} 完成 | "
+                           f"运行中: {overall_progress.running_tasks} | "
+                           f"总进度: {overall_progress.overall_progress:.1f}% | "
+                           f"速度: {overall_progress.total_speed/(1024*1024):.1f} MB/s")
         
+        # 如果有预计完成时间，显示它
         if overall_progress.eta_seconds > 0:
-            eta_min, eta_sec = divmod(overall_progress.eta_seconds, 60)
-            eta_line = f"⏱️  预计剩余时间: {eta_min:02d}:{eta_sec:02d}"
-            display_lines.append(eta_line)
+            eta_minutes = overall_progress.eta_seconds // 60
+            eta_seconds = overall_progress.eta_seconds % 60
+            display_lines.append(f"⏱️  预计剩余时间: {eta_minutes:02d}:{eta_seconds:02d}")
         
-        # 筛选活跃任务（只显示正在进行的任务）
-        active_tasks = {
-            task_id: progress for task_id, progress in tasks_progress.items()
-            if progress.status in [TaskStatus.QUEUED, TaskStatus.EXTRACTING, 
-                                 TaskStatus.DOWNLOADING, TaskStatus.MERGING]
-        }
+        # 只显示活跃的任务（运行中或者排队中）
+        active_tasks = {tid: prog for tid, prog in tasks_progress.items() 
+                       if prog.status in [TaskStatus.QUEUED, TaskStatus.EXTRACTING, 
+                                         TaskStatus.DOWNLOADING, TaskStatus.MERGING]}
         
-        # 显示任务表格（只显示活跃任务）
         if active_tasks:
             display_lines.append("")  # 空行
             display_lines.append("📋 正在进行的任务:")
@@ -256,16 +302,27 @@ class ProgressMonitor:
             
             # 表格头部
             display_lines.append("┌─" + "─" * 10 + "┬─" + "─" * 35 + "┬─" + "─" * 10 + "┬─" + "─" * 18 + "┐")
-            display_lines.append("│ 任务ID     │ 标题                            │ 状态       │ 进度               │")
+            display_lines.append("│ 任务ID    │ 标题                               │ 状态      │ 进度              │")
             display_lines.append("├─" + "─" * 10 + "┼─" + "─" * 35 + "┼─" + "─" * 10 + "┼─" + "─" * 18 + "┤")
             
             # 显示任务行
             active_items = list(active_tasks.items())[:display_count]
             for task_id, progress in active_items:
-                # 截断任务标题
+                # 处理标题长度 - 根据实际显示宽度截断
                 title = "未知标题"
                 if progress.video_info and 'title' in progress.video_info:
-                    title = progress.video_info['title'][:33]
+                    full_title = progress.video_info['title']
+                    if get_display_width(full_title) > 31:  # 为"..."留3个字符空间
+                        # 逐字符截断直到合适长度
+                        truncated = ""
+                        for char in full_title:
+                            if get_display_width(truncated + char + "...") <= 31:
+                                truncated += char
+                            else:
+                                break
+                        title = truncated + "..."
+                    else:
+                        title = full_title
                 
                 # 状态显示
                 status_icons = {
@@ -284,7 +341,13 @@ class ProgressMonitor:
                 else:
                     progress_display = f"{progress.progress_percentage:5.1f}%"
                 
-                task_line = f"│ {task_id:<10} │ {title:<35} │ {status_display:<10} │ {progress_display:<18} │"
+                # 使用正确的对齐函数
+                aligned_id = align_text(task_id, 9, 'left')
+                aligned_title = align_text(title, 34, 'left')  # 目标显示宽度34
+                aligned_status = align_text(status_display, 9, 'left')  # 状态列
+                aligned_progress = align_text(progress_display, 17, 'left')
+                
+                task_line = f"│ {aligned_id} │ {aligned_title} │ {aligned_status} │ {aligned_progress} │"
                 display_lines.append(task_line)
             
             # 表格底部
@@ -326,7 +389,7 @@ class ProgressMonitor:
             status_icon = "📥" if progress.status == TaskStatus.DOWNLOADING else "🔍"
             print(f"  {status_icon} {task_id}: {title} ({progress.progress_percentage:.1f}%)")
     
-    def display_completion_summary(self, final_status: Dict, elapsed_time: float):
+    def display_completion_summary(self, final_status: Dict, elapsed_time: float, tasks_info: Dict = None):
         """显示完成总结"""
         # 清除之前的显示
         self._clear_previous_display()
@@ -338,6 +401,32 @@ class ProgressMonitor:
         print(f"   ✅ 成功: {final_status.get('completed', 0)}")
         print(f"   ❌ 失败: {final_status.get('failed', 0)}")
         print(f"   📊 总计: {final_status.get('total', 0)}")
+        
+        # 显示详细的任务信息（如果提供）
+        if tasks_info:
+            completed_tasks = tasks_info.get('completed', [])
+            failed_tasks = tasks_info.get('failed', [])
+            
+            if completed_tasks:
+                print(f"\n✅ 成功完成的任务:")
+                for task_info in completed_tasks:
+                    bv_id = task_info.get('bv_id', '未知')
+                    title = task_info.get('title', '未知标题')
+                    # 限制标题显示长度
+                    if len(title) > 50:
+                        title = title[:47] + "..."
+                    print(f"   📄 {bv_id}: {title}")
+            
+            if failed_tasks:
+                print(f"\n❌ 失败的任务:")
+                for task_info in failed_tasks:
+                    bv_id = task_info.get('bv_id', '未知')
+                    title = task_info.get('title', '未知标题')
+                    error = task_info.get('error', '未知错误')
+                    # 限制标题显示长度
+                    if len(title) > 40:
+                        title = title[:37] + "..."
+                    print(f"   ❌ {bv_id}: {title} ({error})")
         
         # 重置显示状态
         self._last_display_lines = 0
@@ -1368,6 +1457,8 @@ class YuttoPlus:
         # 进度监控
         self.progress_monitor = ProgressMonitor(max_tasks_display=max_concurrent)
         self.tasks_progress = {}              # {task_id: TaskProgressInfo}
+        self.completed_tasks_info = []        # 完成任务的详细信息
+        self.failed_tasks_info = []           # 失败任务的详细信息
         
         print(f"🚀 YuttoPlus 已初始化 (并发数: {max_concurrent})")
         print(f"📁 输出目录: {self.config.default_output_dir}")
@@ -1554,9 +1645,45 @@ class YuttoPlus:
             if success:
                 task_progress.status = TaskStatus.COMPLETED
                 task_progress.progress_percentage = 100.0
+                
+                # 收集成功任务信息
+                if task_id in self.active_tasks:
+                    task = self.active_tasks[task_id]
+                    if hasattr(task, 'video_info') and task.video_info:
+                        self.completed_tasks_info.append({
+                            'task_id': task_id,
+                            'bv_id': task.video_info.get('bvid', '未知'),
+                            'title': task.video_info.get('title', '未知标题'),
+                            'url': task.url
+                        })
             else:
                 task_progress.status = TaskStatus.FAILED
                 task_progress.error_message = error
+                
+                # 收集失败任务信息
+                if task_id in self.active_tasks:
+                    task = self.active_tasks[task_id]
+                    # 提取BV号
+                    bv_id = "未知"
+                    try:
+                        import re
+                        bv_match = re.search(r'BV([a-zA-Z0-9]+)', task.url)
+                        if bv_match:
+                            bv_id = f"BV{bv_match.group(1)}"
+                    except:
+                        pass
+                    
+                    title = "未知标题"
+                    if hasattr(task, 'video_info') and task.video_info:
+                        title = task.video_info.get('title', '未知标题')
+                    
+                    self.failed_tasks_info.append({
+                        'task_id': task_id,
+                        'bv_id': bv_id,
+                        'title': title,
+                        'url': task.url,
+                        'error': error or '未知错误'
+                    })
         
         # 通知任务管理器
         self.task_manager.on_task_completed(task_id, success, result_info, error)
@@ -1609,6 +1736,13 @@ class YuttoPlus:
             eta_seconds=eta_seconds
         )
     
+    def get_tasks_summary_info(self) -> Dict:
+        """获取任务详细信息总结"""
+        return {
+            'completed': self.completed_tasks_info,
+            'failed': self.failed_tasks_info
+        }
+    
     def pause_all_tasks(self) -> None:
         """暂停所有任务"""
         # TODO: 实现暂停逻辑
@@ -1624,3 +1758,44 @@ class YuttoPlus:
         print("🔚 正在关闭下载器...")
         self.task_manager.shutdown()
         print("✅ 下载器已关闭") 
+    
+    def stop_progress_monitoring(self):
+        """停止进度监控"""
+        self.progress_monitor.display_mode = 'silent'
+    
+    def start_progress_monitoring(self):
+        """开始进度监控"""
+        self.progress_monitor.display_mode = 'table'
+    
+    def wait_for_completion(self):
+        """等待下载完成"""
+        # 等待下载完成
+        max_wait_time = 3600  # 最多等待1小时
+        start_time = time.time()
+        
+        while True:
+            current_time = time.time()
+            elapsed = current_time - start_time
+            
+            # 超时检查
+            if elapsed > max_wait_time:
+                print(f"\n⏰ 下载超时 ({max_wait_time}秒)，强制结束")
+                break
+            
+            queue_status = self.task_manager.get_queue_status()
+            
+            # 检查是否所有任务完成
+            if queue_status['running'] == 0 and queue_status['pending'] == 0:
+                break
+            
+            time.sleep(2)  # 每2秒检查一次
+        
+        # 停止进度监控
+        self.stop_progress_monitoring()
+        
+        # 显示最终结果
+        final_status = self.task_manager.get_queue_status()
+        elapsed_time = time.time() - start_time
+        tasks_info = self.get_tasks_summary_info()
+        
+        self.progress_monitor.display_completion_summary(final_status, elapsed_time, tasks_info)

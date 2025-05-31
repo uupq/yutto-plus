@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>yutto-plus - B站视频下载器</title>
+    <title>yutto-plus v2.0 - B站视频下载器</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         * {
@@ -20,7 +20,7 @@
         }
 
         .container {
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
             background: rgba(255, 255, 255, 0.95);
             border-radius: 20px;
@@ -49,6 +49,99 @@
             font-size: 1.1em;
         }
 
+        .tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px;
+            background: #f8f9fa;
+            color: #666;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .tab.active {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .config-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .config-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .config-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .config-item {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #e1e5e9;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .config-item:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+        }
+
+        .config-item.selected {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .config-item h4 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .config-item p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .config-item .config-details {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: #888;
+        }
+
         .form-group {
             margin-bottom: 20px;
         }
@@ -60,7 +153,7 @@
             color: #333;
         }
 
-        .form-group input, .form-group select {
+        .form-group input, .form-group select, .form-group textarea {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e1e5e9;
@@ -70,7 +163,12 @@
             background: #fff;
         }
 
-        .form-group input:focus, .form-group select:focus {
+        .form-group textarea {
+            height: 120px;
+            resize: vertical;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
@@ -102,16 +200,11 @@
             box-shadow: none;
         }
 
-        .info-section {
-            margin-top: 30px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 15px;
-            border-left: 5px solid #667eea;
-        }
-
-        .hidden {
-            display: none;
+        .btn-small {
+            width: auto;
+            padding: 8px 16px;
+            font-size: 14px;
+            margin: 5px 0;
         }
 
         .progress-container {
@@ -142,6 +235,39 @@
             color: #666;
         }
 
+        .parallel-status {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-top: 20px;
+            border-left: 5px solid #667eea;
+        }
+
+        .task-list {
+            margin-top: 15px;
+        }
+
+        .task-item {
+            background: #f8f9fa;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-status {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-running { background: #e3f2fd; color: #1976d2; }
+        .status-completed { background: #e8f5e8; color: #2e7d32; }
+        .status-failed { background: #ffebee; color: #d32f2f; }
+
         .alert {
             padding: 15px;
             border-radius: 10px;
@@ -167,195 +293,188 @@
             border: 1px solid #bee5eb;
         }
 
-        .video-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }
-
-        .info-item {
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-        }
-
-        .info-item .label {
-            font-weight: 600;
-            color: #667eea;
-            margin-bottom: 5px;
-        }
-
-        .info-item .value {
-            color: #333;
-            word-break: break-all;
-        }
-
-        .stream-info {
-            margin-top: 20px;
-            padding: 15px;
-            background: white;
-            border-radius: 10px;
-            border: 2px solid #e9ecef;
-        }
-
-        .stream-title {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-        }
-
-        .stream-title::before {
-            content: "🎬";
-            margin-right: 8px;
-        }
-
         .connection-status {
             position: fixed;
             top: 20px;
             right: 20px;
-            padding: 10px 15px;
+            padding: 8px 16px;
             border-radius: 20px;
             font-size: 14px;
-            font-weight: 500;
-            z-index: 1000;
+            font-weight: 600;
         }
 
-        .connection-status.connected {
-            background: #d4edda;
-            color: #155724;
-        }
+        .connected { background: #e8f5e8; color: #2e7d32; }
+        .disconnected { background: #ffebee; color: #d32f2f; }
 
-        .connection-status.disconnected {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .downloading {
-            animation: pulse 2s infinite;
-        }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
-    <div class="connection-status disconnected" id="connectionStatus">
-        🔌 连接中...
-    </div>
-
+    <div class="connection-status" id="connectionStatus">🟡 连接中...</div>
+    
     <div class="container">
         <div class="header">
-            <h1>🚀 yutto-plus</h1>
-            <p>新一代 B站视频下载器 - 基于纯 API 实现</p>
+            <h1>🚀 yutto-plus v2.0</h1>
+            <p>现代化B站视频下载器 - 支持并行下载与配置文件</p>
         </div>
 
-        <form id="downloadForm">
-            <div class="form-group">
-                <label for="videoUrl">📹 B站视频链接</label>
-                <input type="url" id="videoUrl" placeholder="https://www.bilibili.com/video/BV..." required>
+        <!-- 选项卡 -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('single')">单个下载</button>
+            <button class="tab" onclick="switchTab('parallel')">并行下载</button>
+            <button class="tab" onclick="switchTab('config')">配置管理</button>
+        </div>
+
+        <!-- 单个下载 -->
+        <div id="singleTab" class="tab-content active">
+            <form id="singleDownloadForm">
+                <div class="form-group">
+                    <label for="singleUrl">🔗 视频链接</label>
+                    <input type="url" id="singleUrl" placeholder="https://www.bilibili.com/video/BV..." required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="singleQuality">🎯 视频质量</label>
+                    <select id="singleQuality">
+                        <option value="127">8K 超高清 (需要大会员)</option>
+                        <option value="120">4K 超清 (需要大会员)</option>
+                        <option value="116">1080P60 (需要大会员)</option>
+                        <option value="80" selected>1080P 高清</option>
+                        <option value="64">720P 高清</option>
+                        <option value="32">480P 清晰</option>
+                        <option value="16">360P 流畅</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn" id="singleDownloadBtn">🚀 开始下载</button>
+            </form>
+            
+            <div id="singleProgress" class="progress-container hidden">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="singleProgressFill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="singleProgressText">等待中...</span>
+                    <span id="singleSpeedText">-</span>
+                </div>
             </div>
+        </div>
 
-            <div class="form-group">
-                <label for="quality">🎯 视频质量</label>
-                <select id="quality">
-                    <option value="127">8K 超高清</option>
-                    <option value="120">4K 超清</option>
-                    <option value="116">1080P60 高帧率</option>
-                    <option value="80" selected>1080P 高清</option>
-                    <option value="64">720P 高清</option>
-                    <option value="32">480P 清晰</option>
-                    <option value="16">360P 流畅</option>
-                </select>
+        <!-- 并行下载 -->
+        <div id="parallelTab" class="tab-content">
+            <form id="parallelDownloadForm">
+                <div class="form-group">
+                    <label for="parallelUrls">🔗 视频链接列表 (每行一个)</label>
+                    <textarea id="parallelUrls" placeholder="https://www.bilibili.com/video/BV...&#10;https://www.bilibili.com/video/BV...&#10;..."></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="parallelQuality">🎯 视频质量</label>
+                    <select id="parallelQuality">
+                        <option value="127">8K 超高清 (需要大会员)</option>
+                        <option value="120">4K 超清 (需要大会员)</option>
+                        <option value="116">1080P60 (需要大会员)</option>
+                        <option value="80" selected>1080P 高清</option>
+                        <option value="64">720P 高清</option>
+                        <option value="32">480P 清晰</option>
+                        <option value="16">360P 流畅</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="parallelConcurrent">⚡ 并发数量</label>
+                    <select id="parallelConcurrent">
+                        <option value="1">1 (单线程)</option>
+                        <option value="2" selected>2 (推荐)</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn" id="parallelDownloadBtn">🚀 开始并行下载</button>
+            </form>
+            
+            <div id="parallelStatus" class="parallel-status hidden">
+                <h3>📊 下载状态</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="parallelProgressFill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="parallelProgressText">准备中...</span>
+                    <span id="parallelSpeedText">-</span>
+                </div>
+                <div id="taskList" class="task-list"></div>
             </div>
+        </div>
 
-            <button type="button" id="previewBtn" class="btn">🔍 预览视频信息</button>
-            <button type="submit" id="downloadBtn" class="btn">🚀 开始下载</button>
-        </form>
+        <!-- 配置管理 -->
+        <div id="configTab" class="tab-content">
+            <div class="config-section">
+                <h3>⚙️ 配置文件管理</h3>
+                <p>选择预设配置文件，或使用默认设置</p>
+                
+                <div id="configList" class="config-list">
+                    <div class="config-item selected" data-config="">
+                        <h4>🔧 默认配置</h4>
+                        <p>使用内置默认设置</p>
+                        <div class="config-details">
+                            <span>质量: 1080P</span>
+                            <span>并发: 2</span>
+                            <span>格式: MP4</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <button class="btn btn-small" onclick="loadConfigs()">🔄 刷新配置列表</button>
+            </div>
+            
+            <div class="config-section">
+                <h3>📋 当前配置状态</h3>
+                <div id="currentConfigStatus">
+                    <p><strong>配置:</strong> <span id="currentConfigName">默认配置</span></p>
+                    <p><strong>状态:</strong> <span id="configLoadStatus">就绪</span></p>
+                </div>
+            </div>
+        </div>
 
+        <!-- 消息容器 -->
         <div id="alertContainer"></div>
-
-        <!-- 视频信息预览 -->
-        <div id="videoInfoSection" class="info-section hidden">
-            <h3>📺 视频信息</h3>
-            <div class="video-info">
-                <div class="info-item">
-                    <div class="label">BV号</div>
-                    <div class="value" id="videoBvId">-</div>
-                </div>
-                <div class="info-item">
-                    <div class="label">标题</div>
-                    <div class="value" id="videoTitle">-</div>
-                </div>
-                <div class="info-item">
-                    <div class="label">UP主</div>
-                    <div class="value" id="videoUploader">-</div>
-                </div>
-                <div class="info-item">
-                    <div class="label">时长</div>
-                    <div class="value" id="videoDuration">-</div>
-                </div>
-            </div>
-            <div id="videoDescription" style="margin-top: 15px; color: #666;"></div>
-        </div>
-
-        <!-- 流信息 -->
-        <div id="streamInfoSection" class="info-section hidden">
-            <h3>🎬 流信息</h3>
-            <div class="stream-info">
-                <div class="stream-title">选中的视频流</div>
-                <div id="selectedVideoStream">等待获取...</div>
-            </div>
-            <div class="stream-info">
-                <div class="stream-title">选中的音频流</div>
-                <div id="selectedAudioStream">等待获取...</div>
-            </div>
-        </div>
-
-        <!-- 下载进度 -->
-        <div id="progressSection" class="progress-container hidden">
-            <h3>📊 下载进度</h3>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <div class="progress-info">
-                <span id="progressText">准备中...</span>
-                <span id="speedText">-</span>
-            </div>
-            <div id="currentItem" style="margin-top: 10px; color: #666; font-size: 14px;"></div>
-        </div>
     </div>
 
     <script>
         // 初始化 Socket.IO
         const socket = io();
-
+        
         // DOM 元素
-        const downloadForm = document.getElementById('downloadForm');
-        const videoUrl = document.getElementById('videoUrl');
-        const quality = document.getElementById('quality');
-        const previewBtn = document.getElementById('previewBtn');
-        const downloadBtn = document.getElementById('downloadBtn');
-        const alertContainer = document.getElementById('alertContainer');
         const connectionStatus = document.getElementById('connectionStatus');
-        const videoInfoSection = document.getElementById('videoInfoSection');
-        const streamInfoSection = document.getElementById('streamInfoSection');
-        const progressSection = document.getElementById('progressSection');
-
-        // 当前任务ID
-        let currentTaskId = null;
+        const alertContainer = document.getElementById('alertContainer');
+        
+        // 单个下载元素
+        const singleDownloadForm = document.getElementById('singleDownloadForm');
+        const singleDownloadBtn = document.getElementById('singleDownloadBtn');
+        const singleProgress = document.getElementById('singleProgress');
+        
+        // 并行下载元素
+        const parallelDownloadForm = document.getElementById('parallelDownloadForm');
+        const parallelDownloadBtn = document.getElementById('parallelDownloadBtn');
+        const parallelStatus = document.getElementById('parallelStatus');
+        
+        // 配置管理元素
+        const configList = document.getElementById('configList');
+        const currentConfigName = document.getElementById('currentConfigName');
+        const configLoadStatus = document.getElementById('configLoadStatus');
+        
+        // 全局状态
+        let currentConfig = null;
+        let activeDownload = false;
 
         // 连接状态管理
         socket.on('connect', function() {
             connectionStatus.textContent = '🟢 已连接';
             connectionStatus.className = 'connection-status connected';
             showAlert('WebSocket 连接成功', 'success');
+            loadConfigs();
         });
 
         socket.on('disconnect', function() {
@@ -364,139 +483,187 @@
             showAlert('WebSocket 连接断开', 'error');
         });
 
-        // 预览视频信息
-        previewBtn.addEventListener('click', function() {
-            const url = videoUrl.value.trim();
-            if (!url) {
-                showAlert('请输入视频链接', 'error');
-                return;
-            }
+        // 选项卡切换
+        function switchTab(tabName) {
+            // 移除所有激活状态
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // 激活选中的选项卡
+            event.target.classList.add('active');
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
 
-            previewBtn.disabled = true;
-            previewBtn.textContent = '🔍 获取中...';
-
-            socket.emit('get_video_info', { url: url });
-        });
-
-        // 下载表单提交
-        downloadForm.addEventListener('submit', function(e) {
+        // 单个下载
+        singleDownloadForm.addEventListener('submit', function(e) {
             e.preventDefault();
             
-            const url = videoUrl.value.trim();
-            const selectedQuality = parseInt(quality.value);
+            const url = document.getElementById('singleUrl').value.trim();
+            const quality = parseInt(document.getElementById('singleQuality').value);
 
             if (!url) {
                 showAlert('请输入视频链接', 'error');
                 return;
             }
 
-            // 禁用按钮
-            downloadBtn.disabled = true;
-            downloadBtn.textContent = '📋 准备中...';
-            downloadBtn.classList.add('downloading');
+            if (activeDownload) {
+                showAlert('有下载任务正在进行，请等待完成', 'error');
+                return;
+            }
 
-            // 显示进度区域
-            progressSection.classList.remove('hidden');
-            updateProgress(0, '准备下载...', '-');
+            activeDownload = true;
+            singleDownloadBtn.disabled = true;
+            singleDownloadBtn.textContent = '📋 准备中...';
+            singleProgress.classList.remove('hidden');
+            
+            updateSingleProgress(0, '准备下载...', '-');
 
-            // 发送下载请求
-            socket.emit('download_request', {
+            socket.emit('single_download_request', {
                 url: url,
-                quality: selectedQuality
+                quality: quality
             });
         });
 
-        // Socket 事件处理
-        socket.on('video_info_preview', function(data) {
-            updateVideoInfo(data);
-            videoInfoSection.classList.remove('hidden');
+        // 并行下载
+        parallelDownloadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
             
-            previewBtn.disabled = false;
-            previewBtn.textContent = '🔍 预览视频信息';
-            showAlert('视频信息获取成功', 'success');
-        });
+            const urlsText = document.getElementById('parallelUrls').value.trim();
+            const quality = parseInt(document.getElementById('parallelQuality').value);
+            const concurrent = parseInt(document.getElementById('parallelConcurrent').value);
 
-        socket.on('download_started', function(data) {
-            currentTaskId = data.task_id;
-            showAlert(`下载任务已启动: ${data.url}`, 'info');
-            updateProgress(0, '正在获取视频信息...', '-');
+            if (!urlsText) {
+                showAlert('请输入视频链接', 'error');
+                return;
+            }
+
+            const urls = urlsText.split('\n').map(url => url.trim()).filter(url => url);
             
-            // 更新按钮状态为准备中
-            downloadBtn.textContent = '📋 准备中...';
-        });
+            if (urls.length === 0) {
+                showAlert('请输入有效的视频链接', 'error');
+                return;
+            }
 
-        socket.on('status_update', function(data) {
-            if (data.task_id === currentTaskId) {
-                // 根据状态更新按钮文本
-                if (data.status === 'downloading') {
-                    downloadBtn.textContent = '📥 正在下载...';
-                    updateProgress(0, data.message, '-');
-                } else if (data.status === 'merging') {
-                    downloadBtn.textContent = '🔄 合并中...';
-                    updateProgress(100, '正在合并音视频...', '-');
+            if (activeDownload) {
+                showAlert('有下载任务正在进行，请等待完成', 'error');
+                return;
+            }
+
+            activeDownload = true;
+            parallelDownloadBtn.disabled = true;
+            parallelDownloadBtn.textContent = `📋 准备下载 ${urls.length} 个任务...`;
+            parallelStatus.classList.remove('hidden');
+            
+            updateParallelProgress(0, `准备下载 ${urls.length} 个任务...`, '-');
+
+            socket.emit('parallel_download_request', {
+                urls: urls,
+                config: {
+                    quality: quality,
+                    concurrent: concurrent
                 }
-            }
+            });
         });
 
-        socket.on('video_info', function(data) {
-            if (data.task_id === currentTaskId) {
-                updateVideoInfo(data);
-                videoInfoSection.classList.remove('hidden');
-            }
-        });
-
-        socket.on('stream_info', function(data) {
-            if (data.task_id === currentTaskId) {
-                updateStreamInfo(data.streams);
-                streamInfoSection.classList.remove('hidden');
-            }
-        });
-
-        socket.on('progress', function(data) {
-            if (data.task_id === currentTaskId) {
-                const percentage = data.percentage;
-                const speedText = `${data.speed_mbps.toFixed(2)} MB/s`;
-                const progressText = `${percentage.toFixed(1)}% (${(data.current_bytes / 1024 / 1024).toFixed(1)}/${(data.total_bytes / 1024 / 1024).toFixed(1)} MB)`;
-                
-                updateProgress(percentage, progressText, speedText);
-                document.getElementById('currentItem').textContent = data.item_name;
-            }
-        });
-
-        socket.on('download_complete', function(data) {
-            if (data.task_id === currentTaskId) {
-                if (data.success) {
-                    showAlert(`✅ 下载完成！文件保存到: ${data.result.output_filepath}`, 'success');
-                    updateProgress(100, '下载完成！', '-');
+        // 配置文件加载
+        function loadConfigs() {
+            fetch('/api/configs')
+                .then(response => response.json())
+                .then(configs => {
+                    const defaultItem = configList.querySelector('[data-config=""]');
+                    // 清除除默认配置外的所有配置项
+                    configList.querySelectorAll('[data-config]:not([data-config=""])').forEach(item => item.remove());
                     
-                    // 显示流信息
-                    updateStreamInfo({
-                        selected_video_stream_info: data.result.selected_video_stream_info,
-                        selected_audio_stream_info: data.result.selected_audio_stream_info
+                    configs.forEach(config => {
+                        const item = document.createElement('div');
+                        item.className = 'config-item';
+                        item.setAttribute('data-config', config.filename);
+                        item.innerHTML = `
+                            <h4>📄 ${config.name}</h4>
+                            <p>${config.description}</p>
+                            <div class="config-details">
+                                <span>质量: ${getQualityText(config.quality)}</span>
+                                <span>并发: ${config.concurrent}</span>
+                                <span>音频: ${config.audio_only ? '仅音频' : '视频+音频'}</span>
+                            </div>
+                        `;
+                        item.addEventListener('click', () => selectConfig(config.filename, config.description));
+                        configList.appendChild(item);
                     });
-                    streamInfoSection.classList.remove('hidden');
-                } else {
-                    showAlert(`❌ 下载失败: ${data.error}`, 'error');
-                    updateProgress(0, '下载失败', '-');
-                }
-                
-                // 重置按钮
-                downloadBtn.disabled = false;
-                downloadBtn.textContent = '🚀 开始下载';
-                downloadBtn.classList.remove('downloading');
-                currentTaskId = null;
+                })
+                .catch(error => {
+                    showAlert('加载配置文件失败: ' + error.message, 'error');
+                });
+        }
+
+        function selectConfig(filename, description) {
+            // 更新UI选中状态
+            configList.querySelectorAll('.config-item').forEach(item => item.classList.remove('selected'));
+            event.currentTarget.classList.add('selected');
+            
+            if (filename === '') {
+                // 选择默认配置
+                currentConfig = null;
+                currentConfigName.textContent = '默认配置';
+                configLoadStatus.textContent = '就绪';
+                showAlert('已切换到默认配置', 'info');
+            } else {
+                // 加载指定配置文件
+                socket.emit('load_config', { config_file: filename });
+                configLoadStatus.textContent = '加载中...';
             }
+        }
+
+        // Socket事件处理
+        socket.on('config_loaded', function(data) {
+            currentConfig = data.config;
+            currentConfigName.textContent = data.config.description || '未知配置';
+            configLoadStatus.textContent = '已加载';
+            showAlert(data.message, 'success');
+        });
+
+        socket.on('parallel_download_started', function(data) {
+            showAlert(`并行下载已启动: ${data.total_tasks} 个任务，并发数: ${data.concurrent}`, 'info');
+            updateParallelProgress(0, '开始下载...', '-');
+        });
+
+        socket.on('parallel_progress', function(data) {
+            const overall = data.overall;
+            const tasks = data.tasks;
+            
+            // 更新整体进度
+            updateParallelProgress(
+                overall.overall_progress,
+                `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                `${overall.total_speed.toFixed(1)} MB/s`
+            );
+            
+            // 更新任务列表
+            updateTaskList(tasks);
+        });
+
+        socket.on('parallel_download_complete', function(data) {
+            const final = data.final_status;
+            showAlert(`并行下载完成! 成功: ${final.completed}, 失败: ${final.failed}`, 'success');
+            
+            // 重置按钮
+            activeDownload = false;
+            parallelDownloadBtn.disabled = false;
+            parallelDownloadBtn.textContent = '🚀 开始并行下载';
+            
+            // 显示完成状态
+            updateParallelProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
         });
 
         socket.on('error', function(data) {
             showAlert(data.message, 'error');
             
-            // 重置按钮
-            previewBtn.disabled = false;
-            previewBtn.textContent = '🔍 预览视频信息';
-            downloadBtn.disabled = false;
-            downloadBtn.textContent = '🚀 开始下载';
-            downloadBtn.classList.remove('downloading');
+            // 重置状态
+            activeDownload = false;
+            singleDownloadBtn.disabled = false;
+            singleDownloadBtn.textContent = '🚀 开始下载';
+            parallelDownloadBtn.disabled = false;
+            parallelDownloadBtn.textContent = '🚀 开始并行下载';
         });
 
         // 辅助函数
@@ -512,29 +679,78 @@
             }, 5000);
         }
 
-        function updateVideoInfo(data) {
-            document.getElementById('videoBvId').textContent = data.bvid;
-            document.getElementById('videoTitle').textContent = data.title;
-            document.getElementById('videoUploader').textContent = data.uploader;
-            document.getElementById('videoDuration').textContent = data.duration ? `${data.duration} 秒` : '未知';
-            
-            if (data.description) {
-                document.getElementById('videoDescription').textContent = `简介: ${data.description}`;
-            }
+        function updateSingleProgress(percentage, progressText, speedText) {
+            document.getElementById('singleProgressFill').style.width = `${percentage}%`;
+            document.getElementById('singleProgressText').textContent = progressText;
+            document.getElementById('singleSpeedText').textContent = speedText;
         }
 
-        function updateStreamInfo(streams) {
-            const videoStream = streams.selected_video_stream_info || '等待获取...';
-            const audioStream = streams.selected_audio_stream_info || '等待获取...';
-            
-            document.getElementById('selectedVideoStream').textContent = videoStream;
-            document.getElementById('selectedAudioStream').textContent = audioStream;
+        function updateParallelProgress(percentage, progressText, speedText) {
+            document.getElementById('parallelProgressFill').style.width = `${percentage}%`;
+            document.getElementById('parallelProgressText').textContent = progressText;
+            document.getElementById('parallelSpeedText').textContent = speedText;
         }
 
-        function updateProgress(percentage, progressText, speedText) {
-            document.getElementById('progressFill').style.width = `${percentage}%`;
-            document.getElementById('progressText').textContent = progressText;
-            document.getElementById('speedText').textContent = speedText;
+        function updateTaskList(tasks) {
+            const taskList = document.getElementById('taskList');
+            taskList.innerHTML = '';
+            
+            Object.entries(tasks).forEach(([taskId, task]) => {
+                const item = document.createElement('div');
+                item.className = 'task-item';
+                
+                const statusClass = getStatusClass(task.status);
+                const statusText = getStatusText(task.status);
+                
+                item.innerHTML = `
+                    <div>
+                        <strong>${task.title}</strong>
+                        <br>
+                        <small>${taskId}</small>
+                    </div>
+                    <div>
+                        <span class="task-status ${statusClass}">${statusText}</span>
+                        <br>
+                        <small>${task.progress_percentage.toFixed(1)}% | ${task.download_speed.toFixed(1)} MB/s</small>
+                    </div>
+                `;
+                
+                taskList.appendChild(item);
+            });
+        }
+
+        function getQualityText(quality) {
+            const qualityMap = {
+                127: '8K', 120: '4K', 116: '1080P60',
+                80: '1080P', 64: '720P', 32: '480P', 16: '360P'
+            };
+            return qualityMap[quality] || quality;
+        }
+
+        function getStatusClass(status) {
+            const statusClassMap = {
+                'pending': 'status-running',
+                'queued': 'status-running',
+                'extracting': 'status-running',
+                'downloading': 'status-running',
+                'merging': 'status-running',
+                'completed': 'status-completed',
+                'failed': 'status-failed'
+            };
+            return statusClassMap[status] || 'status-running';
+        }
+
+        function getStatusText(status) {
+            const statusTextMap = {
+                'pending': '等待中',
+                'queued': '排队中',
+                'extracting': '分析中',
+                'downloading': '下载中',
+                'merging': '合并中',
+                'completed': '已完成',
+                'failed': '失败'
+            };
+            return statusTextMap[status] || status;
         }
     </script>
 </body>

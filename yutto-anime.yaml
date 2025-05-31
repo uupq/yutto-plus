@@ -1,0 +1,56 @@
+# YuttoPlus 追番专用配置文件
+# 适用场景: 追番、追剧，保留弹幕体验
+
+description: "追番专用配置 - 弹幕+高清体验"
+
+# === 基础设置 ===
+quality: 80           # 视频质量: 1080P高清 (追番推荐)
+audio_quality: 30280  # 音频质量: 320kbps
+output_dir: "./Anime_Downloads"  # 动漫专用目录
+format: "mp4"         # 输出格式: MP4播放兼容性好
+
+# === 并行设置 ===
+concurrent: 2         # 适中并发: 平衡速度和稳定性
+parallel_display: "table"  # 表格显示: 方便监控多集下载
+
+# === 下载内容 (完整体验) ===
+audio_only: false     
+no_video: false       
+no_danmaku: false     # 保留弹幕: 追番重要体验
+no_cover: false       # 保留封面: 作为缩略图
+
+# === 格式设置 ===
+danmaku_format: "ass" # ASS弹幕: 播放器支持好，样式丰富
+video_codec: "avc"    # AVC编码: 兼容性最好
+audio_format: "aac"   # AAC音频: 标准格式
+audio_bitrate: "192k"
+
+# === 其他设置 ===
+overwrite: false      # 避免覆盖已下载的集数
+enable_resume: true   # 断点续传: 追番可能分多次下载
+quiet: false         
+verbose: false       
+
+# === 追番使用建议 ===
+# 批量下载整季:
+# python yutto-plus.py --config yutto-anime.yaml ep1_url ep2_url ep3_url ...
+#
+# 单集下载:
+# python yutto-plus.py --config yutto-anime.yaml single_episode_url
+#
+# 文件命名建议:
+# - 保留原标题便于识别
+# - 按集数顺序下载
+# - 建议创建按番剧分类的文件夹
+
+# === 弹幕设置说明 ===
+# ass: 推荐格式，支持样式和特效
+# xml: 原始格式，便于转换
+# protobuf: 登录用户可获取更多弹幕
+
+# === 播放建议 ===
+# 推荐播放器:
+# - PotPlayer (Windows)
+# - VLC (跨平台)
+# - MPV (跨平台，轻量)
+# - IINA (macOS) 

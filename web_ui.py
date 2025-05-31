@@ -1,56 +1,302 @@
 #!/usr/bin/env python3
 """
-yutto-plus Web UI
-基于新的纯 API 实现的 Web 界面
+yutto-plus Web UI v2.0
+集成并行下载和配置文件功能的现代化 Web 界面
 """
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 import json
+import yaml
 from pathlib import Path
 from yutto_plus import YuttoPlus, TaskStatus
+from config_manager import ConfigManager
 import socket
 import webbrowser
 import threading
 import time
+import os
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'yutto_plus_secret'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# 全局下载器实例
+# 全局实例
 downloader = None
-active_tasks = {}
+config_manager = ConfigManager()
+active_downloads = {}  # {session_id: {downloader, tasks}}
 
-def init_downloader():
-    """初始化下载器"""
-    global downloader
-    downloader = YuttoPlus(
-        default_output_dir="/Users/sauterne/Downloads/Bilibili",
-        default_quality=80,  # 1080P
-        default_audio_quality=30280,  # 320kbps
-        default_video_codec="avc",
-        default_output_format="mp4",
-        overwrite=True
-    )
+def init_downloader(session_id, config=None):
+    """为每个会话初始化独立的下载器"""
+    if config:
+        # 使用配置文件参数
+        downloader_instance = YuttoPlus(
+            max_concurrent=config.get('concurrent', 3),
+            default_output_dir=config.get('output_dir', './Downloads'),
+            default_quality=config.get('quality', 80),
+            default_audio_quality=config.get('audio_quality', 30280),
+            default_video_codec=config.get('video_codec', 'avc'),
+            default_output_format=config.get('format', 'mp4'),
+            overwrite=config.get('overwrite', False),
+            enable_resume=config.get('enable_resume', True),
+            sessdata=config.get('sessdata')
+        )
+    else:
+        # 默认配置
+        downloader_instance = YuttoPlus(
+            max_concurrent=2,
+            default_output_dir="./Downloads",
+            default_quality=80,
+            default_audio_quality=30280,
+            overwrite=False
+        )
+    
+    active_downloads[session_id] = {
+        'downloader': downloader_instance,
+        'tasks': {},
+        'config': config or {}
+    }
+    
+    return downloader_instance
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/config/<path:filename>')
+def serve_config(filename):
+    """提供配置文件下载"""
+    config_dir = Path('.')
+    return send_from_directory(config_dir, filename)
+
+@app.route('/api/configs')
+def get_configs():
+    """获取可用的配置文件列表"""
+    config_files = []
+    
+    # 查找YAML配置文件
+    for config_file in Path('.').glob('yutto-*.yaml'):
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            config_files.append({
+                'name': config_file.stem,
+                'filename': config_file.name,
+                'description': config.get('description', '无描述'),
+                'concurrent': config.get('concurrent', 1),
+                'quality': config.get('quality', 80),
+                'audio_only': config.get('audio_only', False)
+            })
+        except Exception as e:
+            print(f"⚠️ 读取配置文件失败 {config_file}: {e}")
+    
+    return jsonify(config_files)
+
 @socketio.on('connect')
 def handle_connect():
     """客户端连接"""
-    print(f'🌐 [连接] 客户端已连接: {request.sid}')
+    session_id = request.sid
+    print(f'🌐 [连接] 客户端已连接: {session_id}')
+    
+    # 为新会话初始化下载器
+    init_downloader(session_id)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """客户端断开连接"""
-    print(f'🔌 [断开] 客户端已断开: {request.sid}')
+    session_id = request.sid
+    print(f'🔌 [断开] 客户端已断开: {session_id}')
+    
+    # 清理会话数据
+    if session_id in active_downloads:
+        # 关闭下载器
+        try:
+            active_downloads[session_id]['downloader'].shutdown()
+        except:
+            pass
+        del active_downloads[session_id]
 
-@socketio.on('download_request')
-def handle_download_request(data):
-    """处理下载请求"""
+@socketio.on('load_config')
+def handle_load_config(data):
+    """加载配置文件"""
+    try:
+        session_id = request.sid
+        config_filename = data.get('config_file')
+        
+        if not config_filename:
+            emit('error', {'message': '请选择配置文件'})
+            return
+        
+        # 加载配置
+        config_path = Path(config_filename)
+        if not config_path.exists():
+            emit('error', {'message': f'配置文件不存在: {config_filename}'})
+            return
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        
+        # 验证配置
+        if not config_manager.validate_config(config):
+            emit('error', {'message': '配置文件验证失败'})
+            return
+        
+        # 关闭旧的下载器
+        if session_id in active_downloads:
+            try:
+                active_downloads[session_id]['downloader'].shutdown()
+            except:
+                pass
+        
+        # 使用新配置初始化下载器
+        downloader_instance = init_downloader(session_id, config)
+        
+        emit('config_loaded', {
+            'config': config,
+            'message': f'配置文件已加载: {config.get("description", config_filename)}'
+        })
+        
+        print(f'⚙️ [配置] 会话 {session_id} 加载配置: {config.get("description", config_filename)}')
+        
+    except Exception as e:
+        print(f'❌ [错误] 加载配置文件时出错: {e}')
+        emit('error', {'message': f'加载配置文件时出错: {str(e)}'})
+
+@socketio.on('parallel_download_request')
+def handle_parallel_download_request(data):
+    """处理并行下载请求"""
+    try:
+        session_id = request.sid
+        urls = data.get('urls', [])
+        custom_config = data.get('config', {})
+        
+        if not urls:
+            emit('error', {'message': '请输入至少一个有效的 B站视频链接'})
+            return
+        
+        # 获取会话的下载器
+        if session_id not in active_downloads:
+            init_downloader(session_id)
+        
+        downloader_instance = active_downloads[session_id]['downloader']
+        base_config = active_downloads[session_id]['config']
+        
+        # 合并配置
+        merged_config = {**base_config, **custom_config}
+        
+        print(f'📥 [并行下载] 会话 {session_id}, URLs: {len(urls)}, 并发: {merged_config.get("concurrent", 2)}')
+        
+        # 准备任务配置
+        tasks = []
+        for url in urls:
+            if url.strip():
+                task_config = {
+                    "quality": merged_config.get('quality', 80),
+                    "audio_quality": merged_config.get('audio_quality', 30280),
+                    "output_dir": merged_config.get('output_dir', './Downloads'),
+                    "output_format": merged_config.get('format', 'mp4'),
+                    "require_video": not merged_config.get('no_video', False),
+                    "require_audio": True,
+                    "require_danmaku": not merged_config.get('no_danmaku', False),
+                    "require_cover": not merged_config.get('no_cover', False),
+                    "danmaku_format": merged_config.get('danmaku_format', 'ass'),
+                    "audio_format": merged_config.get('audio_format', 'mp3'),
+                    "audio_only": merged_config.get('audio_only', False),
+                    "audio_bitrate": merged_config.get('audio_bitrate', '192k')
+                }
+                tasks.append((url.strip(), task_config))
+        
+        if not tasks:
+            emit('error', {'message': '没有有效的下载链接'})
+            return
+        
+        # 设置进度监控回调
+        def setup_progress_callbacks():
+            # 重写下载器的进度回调方法
+            original_update_progress = downloader_instance._update_progress_display
+            
+            def enhanced_update_progress():
+                # 调用原始方法
+                original_update_progress()
+                
+                # 发送实时进度到前端
+                overall_progress = downloader_instance.get_overall_progress()
+                tasks_progress = downloader_instance.tasks_progress
+                
+                # 发送整体进度
+                socketio.emit('parallel_progress', {
+                    'overall': {
+                        'total_tasks': overall_progress.total_tasks,
+                        'completed_tasks': overall_progress.completed_tasks,
+                        'running_tasks': overall_progress.running_tasks,
+                        'failed_tasks': overall_progress.failed_tasks,
+                        'overall_progress': overall_progress.overall_progress,
+                        'total_speed': overall_progress.total_speed / (1024*1024),  # MB/s
+                        'eta_seconds': overall_progress.eta_seconds
+                    },
+                    'tasks': {
+                        task_id: {
+                            'status': progress.status.value,
+                            'title': progress.video_info.get('title', '未知标题') if progress.video_info else '未知标题',
+                            'progress_percentage': progress.progress_percentage,
+                            'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0
+                        }
+                        for task_id, progress in tasks_progress.items()
+                    }
+                }, room=session_id)
+            
+            # 替换方法
+            downloader_instance._update_progress_display = enhanced_update_progress
+        
+        # 添加任务到下载器
+        task_ids = downloader_instance.add_download_tasks(tasks)
+        
+        # 设置回调
+        setup_progress_callbacks()
+        
+        # 启动并行下载
+        downloader_instance.start_parallel_download(display_mode='silent')
+        
+        # 保存任务到会话
+        active_downloads[session_id]['tasks'].update({tid: 'running' for tid in task_ids})
+        
+        # 发送开始确认
+        emit('parallel_download_started', {
+            'task_ids': task_ids,
+            'total_tasks': len(tasks),
+            'concurrent': merged_config.get('concurrent', 2)
+        })
+        
+        # 在后台监控完成状态
+        def monitor_completion():
+            while True:
+                time.sleep(2)
+                queue_status = downloader_instance.task_manager.get_queue_status()
+                
+                if queue_status['running'] == 0 and queue_status['pending'] == 0:
+                    # 所有任务完成
+                    final_status = downloader_instance.task_manager.get_queue_status()
+                    tasks_info = downloader_instance.get_tasks_summary_info()
+                    
+                    socketio.emit('parallel_download_complete', {
+                        'final_status': final_status,
+                        'tasks_info': tasks_info,
+                        'session_id': session_id
+                    }, room=session_id)
+                    
+                    print(f'🎉 [完成] 会话 {session_id} 并行下载完成')
+                    break
+        
+        # 启动监控线程
+        threading.Thread(target=monitor_completion, daemon=True).start()
+        
+    except Exception as e:
+        print(f'❌ [错误] 处理并行下载请求时出错: {e}')
+        emit('error', {'message': f'处理并行下载请求时出错: {str(e)}'})
+
+@socketio.on('single_download_request')
+def handle_single_download_request(data):
+    """处理单个下载请求（保持兼容性）"""
     try:
         url = data.get('url', '').strip()
         quality = int(data.get('quality', 80))
@@ -59,230 +305,77 @@ def handle_download_request(data):
             emit('error', {'message': '请输入有效的 B站视频链接'})
             return
         
-        print(f'📥 [下载请求] URL: {url}, 质量: {quality}')
+        # 转换为并行下载请求
+        parallel_data = {
+            'urls': [url],
+            'config': {'quality': quality, 'concurrent': 1}
+        }
         
-        # 保存当前会话ID，避免在线程中访问 request 上下文
-        session_id = request.sid
-        
-        # 生成任务 ID
-        task_id = f"task_{session_id}_{len(active_tasks)}"
-        
-        # 创建下载任务
-        task = downloader.create_download_task(
-            url,
-            quality=quality,
-            output_dir="/Users/sauterne/Downloads/Bilibili"
-        )
-        
-        # 定义回调函数
-        def on_progress(current_bytes, total_bytes, speed_bps, item_name):
-            """进度回调"""
-            percentage = (current_bytes / total_bytes * 100) if total_bytes > 0 else 0
-            speed_mb = speed_bps / (1024 * 1024)
-            
-            # 使用保存的 session_id，而不是 request.sid
-            socketio.emit('progress', {
-                'task_id': task_id,
-                'current_bytes': current_bytes,
-                'total_bytes': total_bytes,
-                'percentage': percentage,
-                'speed_mbps': speed_mb,
-                'item_name': item_name
-            }, room=session_id)
-        
-        def on_stream_info(stream_info):
-            """流信息回调 - 在流选择完成后立即调用，也用于状态更新"""
-            # 检查是否是状态更新消息
-            if 'status' in stream_info:
-                socketio.emit('status_update', {
-                    'task_id': task_id,
-                    'status': stream_info['status'],
-                    'message': stream_info.get('message', '')
-                }, room=session_id)
-                print(f'📡 [状态更新] 任务 {task_id} 状态: {stream_info["status"]}')
-            else:
-                # 正常的流信息
-                socketio.emit('stream_info', {
-                    'task_id': task_id,
-                    'streams': stream_info
-                }, room=session_id)
-                
-                # 同时更新状态为正在下载
-                socketio.emit('status_update', {
-                    'task_id': task_id,
-                    'status': 'downloading',
-                    'message': '正在下载...'
-                }, room=session_id)
-                print(f'📡 [流信息] 任务 {task_id} 流信息已发送')
-        
-        def on_completion(success, result_info, error_message):
-            """完成回调"""
-            if success:
-                # 使用保存的 session_id
-                socketio.emit('download_complete', {
-                    'task_id': task_id,
-                    'success': True,
-                    'result': result_info
-                }, room=session_id)
-                print(f'✅ [完成] 任务 {task_id} 下载成功')
-            else:
-                # 使用保存的 session_id
-                socketio.emit('download_complete', {
-                    'task_id': task_id,
-                    'success': False,
-                    'error': error_message
-                }, room=session_id)
-                print(f'❌ [失败] 任务 {task_id} 下载失败: {error_message}')
-            
-            # 清理任务
-            if task_id in active_tasks:
-                del active_tasks[task_id]
-        
-        # 保存任务
-        active_tasks[task_id] = task
-        
-        # 发送视频信息（如果可用）
-        if task.video_info:
-            emit('video_info', {
-                'task_id': task_id,
-                'title': task.video_info['title'],
-                'uploader': task.video_info['uploader'],
-                'bvid': task.video_info['bvid'],
-                'duration': task.video_info['duration']
-            })
-        
-        # 启动下载
-        task.start(
-            progress_callback=on_progress,
-            stream_info_callback=on_stream_info,
-            completion_callback=on_completion
-        )
-        
-        # 发送任务启动确认
-        emit('download_started', {
-            'task_id': task_id,
-            'url': url,
-            'quality': quality
-        })
+        handle_parallel_download_request(parallel_data)
         
     except Exception as e:
-        print(f'❌ [错误] 处理下载请求时出错: {e}')
-        emit('error', {'message': f'处理请求时出错: {str(e)}'})
+        print(f'❌ [错误] 处理单个下载请求时出错: {e}')
+        emit('error', {'message': f'处理单个下载请求时出错: {str(e)}'})
 
-@socketio.on('get_video_info')
-def handle_get_video_info(data):
-    """获取视频信息（预览）"""
-    try:
-        url = data.get('url', '').strip()
-        
-        if not url:
-            emit('error', {'message': '请输入有效的 B站视频链接'})
-            return
-        
-        print(f'🔍 [信息预览] 获取视频信息: {url}')
-        
-        # 保存当前会话ID
-        session_id = request.sid
-        
-        # 创建临时任务来获取信息
-        import asyncio
-        from yutto_plus import BilibiliAPIClient
-        
-        async def get_info():
-            async with BilibiliAPIClient() as client:
-                return await client.get_video_info(url)
-        
-        # 在新的事件循环中运行
-        import threading
-        
-        def info_thread():
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                video_info = loop.run_until_complete(get_info())
-                
-                # 使用保存的 session_id
-                socketio.emit('video_info_preview', {
-                    'title': video_info['title'],
-                    'uploader': video_info['uploader'],
-                    'bvid': video_info['bvid'],
-                    'duration': video_info['duration'],
-                    'description': video_info.get('description', '')[:200] + '...' if len(video_info.get('description', '')) > 200 else video_info.get('description', '')
-                }, room=session_id)
-                
-            except Exception as e:
-                # 使用保存的 session_id
-                socketio.emit('error', {'message': f'获取视频信息失败: {str(e)}'}, room=session_id)
-            finally:
-                loop.close()
-        
-        thread = threading.Thread(target=info_thread, daemon=True)
-        thread.start()
-        
-    except Exception as e:
-        print(f'❌ [错误] 获取视频信息时出错: {e}')
-        emit('error', {'message': f'获取视频信息失败: {str(e)}'})
-
-@socketio.on('get_task_status')
-def handle_get_task_status(data):
-    """获取任务状态"""
-    task_id = data.get('task_id')
+@socketio.on('get_session_status')
+def handle_get_session_status():
+    """获取会话状态"""
+    session_id = request.sid
     
-    if task_id in active_tasks:
-        task = active_tasks[task_id]
-        status = task.get_status()
+    if session_id in active_downloads:
+        downloader_instance = active_downloads[session_id]['downloader']
+        config = active_downloads[session_id]['config']
         
-        emit('task_status', {
-            'task_id': task_id,
-            'status': status.value
+        queue_status = downloader_instance.task_manager.get_queue_status()
+        overall_progress = downloader_instance.get_overall_progress()
+        
+        emit('session_status', {
+            'config_loaded': bool(config),
+            'config_description': config.get('description', '默认配置'),
+            'queue_status': queue_status,
+            'overall_progress': {
+                'total_tasks': overall_progress.total_tasks,
+                'completed_tasks': overall_progress.completed_tasks,
+                'running_tasks': overall_progress.running_tasks,
+                'failed_tasks': overall_progress.failed_tasks,
+                'overall_progress': overall_progress.overall_progress
+            }
         })
-        
-        # 如果有流信息，也发送
-        stream_info = task.get_selected_streams_info()
-        if stream_info:
-            emit('stream_info', {
-                'task_id': task_id,
-                'streams': stream_info
-            })
-    else:
-        emit('error', {'message': f'任务 {task_id} 不存在'})
 
 def find_available_port(start_port=12001):
-    """查找可用端口，从 start_port 开始"""
-    port = start_port
-    while port < 65535:
+    """查找可用端口"""
+    for port in range(start_port, start_port + 100):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('localhost', port))
+                s.bind(('', port))
                 return port
         except OSError:
-            port += 1
-    raise RuntimeError("无法找到可用端口")
+            continue
+    return None
 
 def open_browser_delayed(url, delay=2):
     """延迟打开浏览器"""
     time.sleep(delay)
-    print(f"🌐 [浏览器] 正在打开 {url}")
     webbrowser.open(url)
 
-if __name__ == "__main__":
-    print("🚀 [启动] yutto-plus Web UI 正在启动...")
+if __name__ == '__main__':
+    print("🚀 启动 YuttoPlus Web UI v2.0")
     
     # 查找可用端口
-    port = find_available_port(12001)
-    print(f"🔌 [端口] 找到可用端口: {port}")
+    port = find_available_port()
+    if not port:
+        print("❌ 无法找到可用端口")
+        exit(1)
     
-    print("📁 [输出] 默认下载目录: /Users/sauterne/Downloads/Bilibili")
+    print(f"🌐 Web UI 地址: http://localhost:{port}")
+    print("📋 新功能:")
+    print("   • 并行下载支持")
+    print("   • 配置文件管理")
+    print("   • 实时进度监控")
+    print("   • 多会话支持")
     
-    # 初始化下载器
-    init_downloader()
+    # 延迟打开浏览器
+    threading.Thread(target=open_browser_delayed, args=(f"http://localhost:{port}",), daemon=True).start()
     
-    # 构建访问 URL
-    url = f"http://localhost:{port}"
-    print(f"🌐 [服务] 访问 {url} 来使用界面")
-    
-    # 延迟打开浏览器，给服务器时间启动
-    browser_thread = threading.Thread(target=open_browser_delayed, args=(url, 3), daemon=True)
-    browser_thread.start()
-    
-    socketio.run(app, host='0.0.0.0', port=port, debug=False)  # 关闭 debug 模式避免重启 
+    # 启动服务器
+    socketio.run(app, host='0.0.0.0', port=port, debug=False) 
