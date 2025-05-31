@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>yutto-plus v2.0 - B站视频下载器</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px;
+            background: #f8f9fa;
+            color: #666;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .tab.active {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .config-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .config-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .config-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .config-item {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #e1e5e9;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .config-item:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+        }
+
+        .config-item.selected {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .config-item h4 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .config-item p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .config-item .config-details {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: #fff;
+        }
+
+        .form-group textarea {
+            height: 120px;
+            resize: vertical;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-small {
+            width: auto;
+            padding: 8px 16px;
+            font-size: 14px;
+            margin: 5px 0;
+        }
+
+        .progress-container {
+            margin-top: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .parallel-status {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-top: 20px;
+            border-left: 5px solid #667eea;
+        }
+
+        .task-list {
+            margin-top: 15px;
+        }
+
+        .task-item {
+            background: #f8f9fa;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-status {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-running { background: #e3f2fd; color: #1976d2; }
+        .status-completed { background: #e8f5e8; color: #2e7d32; }
+        .status-failed { background: #ffebee; color: #d32f2f; }
+
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-weight: 500;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .connected { background: #e8f5e8; color: #2e7d32; }
+        .disconnected { background: #ffebee; color: #d32f2f; }
+
+        .hidden { display: none; }
+        
+        /* 配置编辑模态框样式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+        }
+        
+        .modal.show {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .modal-header h2 {
+            color: #333;
+            margin: 0;
+        }
+        
+        .close {
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #999;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+        
+        .close:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .form-grid .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .config-item-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .btn-edit {
+            padding: 5px 10px;
+            font-size: 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .btn-edit:hover {
+            background: #0056b3;
+        }
+        
+        .sessdata-status {
+            font-weight: 600;
+        }
+        
+        .btn-verify {
+            padding: 3px 8px;
+            font-size: 11px;
+            background: #ffc107;
+            color: #212529;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-left: 5px;
+        }
+        
+        .btn-verify:hover {
+            background: #e0a800;
+        }
+        
+        .sessdata-pending { color: #ffc107; }
+        .sessdata-validating { color: #17a2b8; }
+        .sessdata-valid { color: #28a745; }
+        .sessdata-invalid { color: #dc3545; }
+        .sessdata-none { color: #6c757d; }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">🟡 连接中...</div>
+    
+    <div class="container">
+        <div class="header">
+            <h1>🚀 yutto-plus v2.0</h1>
+            <p>现代化B站视频下载器 - 支持并行下载与配置文件</p>
+        </div>
+
+        <!-- 选项卡 -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('single')">单个下载</button>
+            <button class="tab" onclick="switchTab('parallel')">并行下载</button>
+            <button class="tab" onclick="switchTab('config')">配置管理</button>
+        </div>
+
+        <!-- 单个下载 -->
+        <div id="singleTab" class="tab-content active">
+            <form id="singleDownloadForm">
+                <div class="form-group">
+                    <label for="singleUrl">🔗 视频链接</label>
+                    <input type="url" id="singleUrl" placeholder="https://www.bilibili.com/video/BV..." required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="singleQuality">🎯 视频质量</label>
+                    <select id="singleQuality">
+                        <option value="127">8K 超高清 (需要大会员)</option>
+                        <option value="120">4K 超清 (需要大会员)</option>
+                        <option value="116">1080P60 (需要大会员)</option>
+                        <option value="80" selected>1080P 高清</option>
+                        <option value="64">720P 高清</option>
+                        <option value="32">480P 清晰</option>
+                        <option value="16">360P 流畅</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn" id="singleDownloadBtn">🚀 开始下载</button>
+            </form>
+            
+            <div id="singleProgress" class="progress-container hidden">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="singleProgressFill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="singleProgressText">等待中...</span>
+                    <span id="singleSpeedText">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 并行下载 -->
+        <div id="parallelTab" class="tab-content">
+            <form id="parallelDownloadForm">
+                <div class="form-group">
+                    <label for="parallelUrls">🔗 视频链接列表 (每行一个)</label>
+                    <textarea id="parallelUrls" placeholder="https://www.bilibili.com/video/BV...&#10;https://www.bilibili.com/video/BV...&#10;..."></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="parallelQuality">🎯 视频质量</label>
+                    <select id="parallelQuality">
+                        <option value="127">8K 超高清 (需要大会员)</option>
+                        <option value="120">4K 超清 (需要大会员)</option>
+                        <option value="116">1080P60 (需要大会员)</option>
+                        <option value="80" selected>1080P 高清</option>
+                        <option value="64">720P 高清</option>
+                        <option value="32">480P 清晰</option>
+                        <option value="16">360P 流畅</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="parallelConcurrent">⚡ 并发数量</label>
+                    <select id="parallelConcurrent">
+                        <option value="1">1 (单线程)</option>
+                        <option value="2" selected>2 (推荐)</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn" id="parallelDownloadBtn">🚀 开始并行下载</button>
+            </form>
+            
+            <div id="parallelStatus" class="parallel-status hidden">
+                <h3>📊 下载状态</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="parallelProgressFill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="parallelProgressText">准备中...</span>
+                    <span id="parallelSpeedText">-</span>
+                </div>
+                <div id="taskList" class="task-list"></div>
+            </div>
+        </div>
+
+        <!-- 配置管理 -->
+        <div id="configTab" class="tab-content">
+            <div class="config-section">
+                <h3>⚙️ 配置文件管理</h3>
+                <p>选择预设配置文件，编辑参数，或使用默认设置</p>
+                
+                <div id="configList" class="config-list">
+                    <!-- 配置项将通过JavaScript动态加载 -->
+                </div>
+                
+                <button class="btn btn-small" onclick="loadConfigs()">🔄 刷新配置列表</button>
+            </div>
+            
+            <div class="config-section">
+                <h3>📋 当前配置状态</h3>
+                <div id="currentConfigStatus">
+                    <p><strong>配置:</strong> <span id="currentConfigName">加载中...</span></p>
+                    <p><strong>状态:</strong> <span id="configLoadStatus">连接中...</span></p>
+                    <p><strong>SESSDATA:</strong> <span id="sessdataStatus" class="sessdata-status sessdata-none">❌ 未配置</span></p>
+                    <div id="sessdataInfo" style="font-size: 12px; color: #666; margin-top: 5px; display: none;">
+                        <span id="sessdataPreview"></span>
+                    </div>
+                </div>
+                
+                <div class="alert alert-info" style="margin-top: 15px;">
+                    <strong>💡 SESSDATA 说明:</strong><br>
+                    • 用于下载高清视频和大会员内容<br>
+                    • 点击配置文件的"编辑"按钮可添加SESSDATA<br>
+                    • 获取方法: 登录B站 → F12 → Application → Cookies → SESSDATA<br>
+                    • 系统会自动验证SESSDATA的有效性
+                </div>
+            </div>
+        </div>
+
+        <!-- 消息容器 -->
+        <div id="alertContainer"></div>
+    </div>
+
+    <!-- 配置编辑模态框 -->
+    <div id="configModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">编辑配置</h2>
+                <span class="close" onclick="closeConfigModal()">&times;</span>
+            </div>
+            
+            <form id="configEditForm">
+                <div class="form-grid">
+                    <!-- 基础设置 -->
+                    <div class="form-group">
+                        <label for="editDescription">📝 配置描述</label>
+                        <input type="text" id="editDescription" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="editOutputDir">📁 输出目录</label>
+                        <input type="text" id="editOutputDir" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="editQuality">🎯 视频质量</label>
+                        <select id="editQuality">
+                            <option value="127">8K 超高清</option>
+                            <option value="120">4K 超清</option>
+                            <option value="116">1080P60</option>
+                            <option value="80">1080P 高清</option>
+                            <option value="64">720P 高清</option>
+                            <option value="32">480P 清晰</option>
+                            <option value="16">360P 流畅</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="editAudioQuality">🔊 音频质量</label>
+                        <select id="editAudioQuality">
+                            <option value="30251">Hi-Res 无损</option>
+                            <option value="30280">320kbps</option>
+                            <option value="30232">128kbps</option>
+                            <option value="30216">64kbps</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="editFormat">📦 输出格式</label>
+                        <select id="editFormat">
+                            <option value="mp4">MP4</option>
+                            <option value="mkv">MKV</option>
+                            <option value="mov">MOV</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="editConcurrent">⚡ 并发数量</label>
+                        <select id="editConcurrent">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                        </select>
+                    </div>
+                    
+                    <!-- SESSDATA设置 -->
+                    <div class="form-group full-width">
+                        <label for="editSessdata">🔑 SESSDATA (可选)</label>
+                        <input type="text" id="editSessdata" placeholder="输入您的B站SESSDATA，留空表示未配置">
+                        <small style="color: #666;">用于下载高清视频和大会员内容</small>
+                    </div>
+                    
+                    <!-- 下载内容选项 -->
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editAudioOnly">
+                            <label for="editAudioOnly">🎵 仅下载音频</label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editNoVideo">
+                            <label for="editNoVideo">📺 跳过视频</label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editNoDanmaku">
+                            <label for="editNoDanmaku">💬 跳过弹幕</label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editNoCover">
+                            <label for="editNoCover">🖼️ 跳过封面</label>
+                        </div>
+                    </div>
+                    
+                    <!-- 其他设置 -->
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editOverwrite">
+                            <label for="editOverwrite">🔄 覆盖现有文件</label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editEnableResume">
+                            <label for="editEnableResume">⏯️ 启用断点续传</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="btn-group">
+                    <button type="submit" class="btn">💾 保存配置</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeConfigModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 初始化 Socket.IO
+        const socket = io();
+        
+        // DOM 元素
+        const connectionStatus = document.getElementById('connectionStatus');
+        const alertContainer = document.getElementById('alertContainer');
+        
+        // 单个下载元素
+        const singleDownloadForm = document.getElementById('singleDownloadForm');
+        const singleDownloadBtn = document.getElementById('singleDownloadBtn');
+        const singleProgress = document.getElementById('singleProgress');
+        
+        // 并行下载元素
+        const parallelDownloadForm = document.getElementById('parallelDownloadForm');
+        const parallelDownloadBtn = document.getElementById('parallelDownloadBtn');
+        const parallelStatus = document.getElementById('parallelStatus');
+        
+        // 配置管理元素
+        const configList = document.getElementById('configList');
+        const currentConfigName = document.getElementById('currentConfigName');
+        const configLoadStatus = document.getElementById('configLoadStatus');
+        
+        // 全局状态
+        let currentConfig = null;
+        let activeDownload = false;
+        let currentEditingConfig = null;
+        let sessdataValidationCache = {}; // 缓存SESSDATA验证结果 {filename: {status, message}}
+
+        // 连接状态管理
+        socket.on('connect', function() {
+            connectionStatus.textContent = '🟢 已连接';
+            connectionStatus.className = 'connection-status connected';
+            showAlert('WebSocket 连接成功', 'success');
+            loadConfigs();
+        });
+
+        socket.on('disconnect', function() {
+            connectionStatus.textContent = '🔴 连接断开';
+            connectionStatus.className = 'connection-status disconnected';
+            showAlert('WebSocket 连接断开', 'error');
+        });
+
+        // 选项卡切换
+        function switchTab(tabName) {
+            // 移除所有激活状态
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // 激活选中的选项卡
+            event.target.classList.add('active');
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+
+        // 单个下载
+        singleDownloadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const url = document.getElementById('singleUrl').value.trim();
+            const quality = parseInt(document.getElementById('singleQuality').value);
+
+            if (!url) {
+                showAlert('请输入视频链接', 'error');
+                return;
+            }
+
+            if (activeDownload) {
+                showAlert('有下载任务正在进行，请等待完成', 'error');
+                return;
+            }
+
+            activeDownload = true;
+            singleDownloadBtn.disabled = true;
+            singleDownloadBtn.textContent = '📋 准备中...';
+            singleProgress.classList.remove('hidden');
+            
+            updateSingleProgress(0, '准备下载...', '-');
+
+            socket.emit('single_download_request', {
+                url: url,
+                quality: quality
+            });
+        });
+
+        // 并行下载
+        parallelDownloadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const urlsText = document.getElementById('parallelUrls').value.trim();
+            const quality = parseInt(document.getElementById('parallelQuality').value);
+            const concurrent = parseInt(document.getElementById('parallelConcurrent').value);
+
+            if (!urlsText) {
+                showAlert('请输入视频链接', 'error');
+                return;
+            }
+
+            const urls = urlsText.split('\n').map(url => url.trim()).filter(url => url);
+            
+            if (urls.length === 0) {
+                showAlert('请输入有效的视频链接', 'error');
+                return;
+            }
+
+            if (activeDownload) {
+                showAlert('有下载任务正在进行，请等待完成', 'error');
+                return;
+            }
+
+            activeDownload = true;
+            parallelDownloadBtn.disabled = true;
+            parallelDownloadBtn.textContent = `📋 准备下载 ${urls.length} 个任务...`;
+            parallelStatus.classList.remove('hidden');
+            
+            updateParallelProgress(0, `准备下载 ${urls.length} 个任务...`, '-');
+
+            socket.emit('parallel_download_request', {
+                urls: urls,
+                config: {
+                    quality: quality,
+                    concurrent: concurrent
+                }
+            });
+        });
+
+        // 配置文件加载
+        function loadConfigs() {
+            fetch('/api/configs')
+                .then(response => response.json())
+                .then(configs => {
+                    configList.innerHTML = '';
+                    
+                    configs.forEach(config => {
+                        const item = document.createElement('div');
+                        item.className = 'config-item';
+                        item.setAttribute('data-config', config.filename);
+                        
+                        // 如果是yutto-webui.yaml，默认选中
+                        if (config.filename === 'yutto-webui.yaml') {
+                            item.classList.add('selected');
+                        }
+                        
+                        // 确定SESSDATA状态（优先使用缓存）
+                        let sessdataIndicator = '';
+                        let finalStatus = config.sessdata_status;
+                        let finalMessage = config.sessdata_message;
+                        
+                        // 检查缓存中是否有验证结果
+                        if (sessdataValidationCache[config.filename]) {
+                            const cached = sessdataValidationCache[config.filename];
+                            finalStatus = cached.status;
+                            finalMessage = cached.message;
+                        }
+                        
+                        if (finalStatus === 'valid') {
+                            sessdataIndicator = '<span style="color: #28a745;">🔑 SESSDATA可用</span>';
+                        } else if (finalStatus === 'invalid') {
+                            sessdataIndicator = '<span style="color: #dc3545;">⚠️ SESSDATA无效</span>';
+                        } else if (finalStatus === 'pending') {
+                            sessdataIndicator = `
+                                <span style="color: #ffc107;">🔑 SESSDATA存在</span>
+                                <button class="btn-verify" onclick="validateSessdata('${config.filename}', event)">验证</button>
+                            `;
+                        } else {
+                            sessdataIndicator = '<span style="color: #6c757d;">🔓 未配置SESSDATA</span>';
+                        }
+                        
+                        item.innerHTML = `
+                            <h4>📄 ${config.name}</h4>
+                            <p>${config.description}</p>
+                            <div class="config-details">
+                                <span>质量: ${getQualityText(config.quality)}</span>
+                                <span>并发: ${config.concurrent}</span>
+                                <span>音频: ${config.audio_only ? '仅音频' : '视频+音频'}</span>
+                                ${sessdataIndicator}
+                            </div>
+                            <div class="config-item-actions">
+                                <button class="btn-edit" onclick="editConfig('${config.filename}')">✏️ 编辑</button>
+                            </div>
+                        `;
+                        item.addEventListener('click', (e) => {
+                            if (!e.target.closest('.btn-edit')) {
+                                selectConfig(config.filename, config.description);
+                            }
+                        });
+                        configList.appendChild(item);
+                    });
+                })
+                .catch(error => {
+                    showAlert('加载配置文件失败: ' + error.message, 'error');
+                });
+        }
+
+        function selectConfig(filename, description) {
+            // 更新UI选中状态
+            configList.querySelectorAll('.config-item').forEach(item => item.classList.remove('selected'));
+            event.currentTarget.classList.add('selected');
+            
+            // 加载指定配置文件
+            socket.emit('load_config', { config_file: filename });
+            configLoadStatus.textContent = '加载中...';
+        }
+
+        // 配置编辑相关函数
+        function editConfig(filename) {
+            currentEditingConfig = filename;
+            document.getElementById('modalTitle').textContent = `编辑配置 - ${filename}`;
+            
+            // 加载配置数据
+            fetch(`/api/config/${filename}`)
+                .then(response => response.json())
+                .then(config => {
+                    fillConfigForm(config);
+                    document.getElementById('configModal').classList.add('show');
+                })
+                .catch(error => {
+                    showAlert('加载配置失败: ' + error.message, 'error');
+                });
+        }
+
+        function fillConfigForm(config) {
+            document.getElementById('editDescription').value = config.description || '';
+            document.getElementById('editOutputDir').value = config.output_dir || './Downloads';
+            document.getElementById('editQuality').value = config.quality || 80;
+            document.getElementById('editAudioQuality').value = config.audio_quality || 30280;
+            document.getElementById('editFormat').value = config.format || 'mp4';
+            document.getElementById('editConcurrent').value = config.concurrent || 2;
+            document.getElementById('editSessdata').value = config.sessdata || '';
+            
+            document.getElementById('editAudioOnly').checked = config.audio_only || false;
+            document.getElementById('editNoVideo').checked = config.no_video || false;
+            document.getElementById('editNoDanmaku').checked = config.no_danmaku || false;
+            document.getElementById('editNoCover').checked = config.no_cover || false;
+            document.getElementById('editOverwrite').checked = config.overwrite || false;
+            document.getElementById('editEnableResume').checked = config.enable_resume !== false;
+        }
+
+        function closeConfigModal() {
+            document.getElementById('configModal').classList.remove('show');
+            currentEditingConfig = null;
+        }
+
+        // 配置保存
+        document.getElementById('configEditForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            if (!currentEditingConfig) {
+                showAlert('没有选择要编辑的配置文件', 'error');
+                return;
+            }
+            
+            const newSessdata = document.getElementById('editSessdata').value;
+            
+            // 检查SESSDATA是否发生了变化
+            fetch(`/api/config/${currentEditingConfig}`)
+                .then(response => response.json())
+                .then(originalConfig => {
+                    const originalSessdata = originalConfig.sessdata || '';
+                    
+                    // 如果SESSDATA发生了变化，清理缓存
+                    if (newSessdata !== originalSessdata) {
+                        delete sessdataValidationCache[currentEditingConfig];
+                    }
+                    
+                    // 继续保存配置
+                    saveConfigData();
+                })
+                .catch(error => {
+                    // 如果获取原配置失败，仍然继续保存
+                    saveConfigData();
+                });
+            
+            function saveConfigData() {
+                const configData = {
+                    description: document.getElementById('editDescription').value,
+                    output_dir: document.getElementById('editOutputDir').value,
+                    quality: parseInt(document.getElementById('editQuality').value),
+                    audio_quality: parseInt(document.getElementById('editAudioQuality').value),
+                    format: document.getElementById('editFormat').value,
+                    concurrent: parseInt(document.getElementById('editConcurrent').value),
+                    sessdata: newSessdata || undefined,
+                    
+                    audio_only: document.getElementById('editAudioOnly').checked,
+                    no_video: document.getElementById('editNoVideo').checked,
+                    no_danmaku: document.getElementById('editNoDanmaku').checked,
+                    no_cover: document.getElementById('editNoCover').checked,
+                    overwrite: document.getElementById('editOverwrite').checked,
+                    enable_resume: document.getElementById('editEnableResume').checked,
+                    
+                    // 其他默认值
+                    parallel_display: 'table',
+                    danmaku_format: 'ass',
+                    audio_format: 'mp3',
+                    audio_bitrate: '192k',
+                    video_codec: 'avc',
+                    quiet: false,
+                    verbose: false
+                };
+                
+                // 保存配置
+                fetch(`/api/config/${currentEditingConfig}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(configData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showAlert('配置已保存', 'success');
+                        closeConfigModal();
+                        loadConfigs();
+                        
+                        // 如果需要验证SESSDATA，异步验证
+                        if (data.requires_sessdata_validation) {
+                            setTimeout(() => {
+                                validateSessdataAfterSave(currentEditingConfig);
+                            }, 500);
+                        }
+                    } else {
+                        showAlert(data.error + (data.message ? ': ' + data.message : ''), 'error');
+                    }
+                })
+                .catch(error => {
+                    showAlert('保存失败: ' + error.message, 'error');
+                });
+            }
+        });
+
+        // 保存后验证SESSDATA
+        function validateSessdataAfterSave(filename) {
+            // 在当前配置状态显示验证中
+            const sessdataStatus = document.getElementById('sessdataStatus');
+            sessdataStatus.innerHTML = '🔄 SESSDATA正在验证...';
+            sessdataStatus.className = 'sessdata-status sessdata-validating';
+            
+            fetch(`/api/validate-sessdata/${filename}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.valid) {
+                        sessdataStatus.innerHTML = '✅ SESSDATA可用';
+                        sessdataStatus.className = 'sessdata-status sessdata-valid';
+                        showAlert(`SESSDATA验证成功: ${data.message}`, 'success');
+                        
+                        // 保存到缓存
+                        sessdataValidationCache[filename] = {
+                            status: 'valid',
+                            message: data.message
+                        };
+                    } else {
+                        sessdataStatus.innerHTML = '⚠️ SESSDATA无效';
+                        sessdataStatus.className = 'sessdata-status sessdata-invalid';
+                        showAlert(`SESSDATA验证失败: ${data.message}`, 'error');
+                        
+                        // 保存到缓存
+                        sessdataValidationCache[filename] = {
+                            status: 'invalid',
+                            message: data.message
+                        };
+                    }
+                })
+                .catch(error => {
+                    sessdataStatus.innerHTML = '❓ SESSDATA验证失败';
+                    sessdataStatus.className = 'sessdata-status sessdata-invalid';
+                    showAlert('SESSDATA验证请求失败', 'error');
+                });
+        }
+
+        // Socket事件处理
+        socket.on('config_loaded', function(data) {
+            currentConfig = data.config;
+            currentConfigName.textContent = data.config.description || '未知配置';
+            configLoadStatus.textContent = '已加载';
+            
+            // 更新SESSDATA状态
+            const sessdataStatus = document.getElementById('sessdataStatus');
+            const sessdataInfo = document.getElementById('sessdataInfo');
+            const sessdataPreview = document.getElementById('sessdataPreview');
+            
+            sessdataStatus.className = 'sessdata-status';
+            
+            if (data.sessdata_configured) {
+                if (data.sessdata_valid) {
+                    sessdataStatus.innerHTML = '✅ SESSDATA可用';
+                    sessdataStatus.classList.add('sessdata-valid');
+                    sessdataInfo.style.display = 'block';
+                    sessdataPreview.textContent = `${data.sessdata_message} (${data.sessdata_preview})`;
+                } else {
+                    // 有SESSDATA但未验证
+                    sessdataStatus.innerHTML = '🔑 SESSDATA存在，可用性待验证';
+                    sessdataStatus.classList.add('sessdata-pending');
+                    sessdataInfo.style.display = 'block';
+                    sessdataPreview.textContent = `预览: ${data.sessdata_preview}`;
+                }
+            } else {
+                sessdataStatus.innerHTML = '🔓 未配置SESSDATA';
+                sessdataStatus.classList.add('sessdata-none');
+                sessdataInfo.style.display = 'none';
+            }
+            
+            // 更新并行下载界面的默认值
+            const parallelQuality = document.getElementById('parallelQuality');
+            const parallelConcurrent = document.getElementById('parallelConcurrent');
+            const singleQuality = document.getElementById('singleQuality');
+            
+            // 更新视频质量选择
+            if (data.config.quality) {
+                parallelQuality.value = data.config.quality;
+                singleQuality.value = data.config.quality;
+            }
+            
+            // 更新并发数量选择
+            if (data.config.concurrent) {
+                parallelConcurrent.value = data.config.concurrent;
+            }
+            
+            showAlert(data.message, 'success');
+        });
+
+        socket.on('parallel_download_started', function(data) {
+            showAlert(`并行下载已启动: ${data.total_tasks} 个任务，并发数: ${data.concurrent}`, 'info');
+            
+            // 显示登录状态
+            if (data.sessdata_configured) {
+                showAlert(`✅ ${data.login_status}，可下载高清视频`, 'success');
+            } else {
+                showAlert(`ℹ️ ${data.login_status}`, 'info');
+            }
+            
+            updateParallelProgress(0, '开始下载...', '-');
+        });
+
+        socket.on('parallel_progress', function(data) {
+            const overall = data.overall;
+            const tasks = data.tasks;
+            
+            // 更新整体进度
+            updateParallelProgress(
+                overall.overall_progress,
+                `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                `${overall.total_speed.toFixed(1)} MB/s`
+            );
+            
+            // 更新任务列表
+            updateTaskList(tasks);
+        });
+
+        socket.on('parallel_download_complete', function(data) {
+            const final = data.final_status;
+            
+            if (final.failed > 0 && final.completed === 0) {
+                showAlert(`下载失败! 失败: ${final.failed}`, 'error');
+            } else if (final.failed > 0) {
+                showAlert(`下载完成! 成功: ${final.completed}, 失败: ${final.failed}`, 'info');
+            } else {
+                showAlert(`下载完成! 成功下载 ${final.completed} 个视频`, 'success');
+            }
+            
+            // 重置按钮状态
+            resetDownloadButtons();
+            
+            // 显示完成状态
+            updateParallelProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
+        });
+
+        socket.on('error', function(data) {
+            showAlert(data.message, 'error');
+            
+            // 重置按钮状态
+            resetDownloadButtons();
+        });
+
+        // 重置下载按钮状态
+        function resetDownloadButtons() {
+            activeDownload = false;
+            singleDownloadBtn.disabled = false;
+            singleDownloadBtn.textContent = '🚀 开始下载';
+            parallelDownloadBtn.disabled = false;
+            parallelDownloadBtn.textContent = '🚀 开始并行下载';
+            
+            // 隐藏进度条（延迟3秒）
+            setTimeout(() => {
+                singleProgress.classList.add('hidden');
+                parallelStatus.classList.add('hidden');
+            }, 3000);
+        }
+
+        // 辅助函数
+        function showAlert(message, type) {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            
+            alertContainer.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+
+        function updateSingleProgress(percentage, progressText, speedText) {
+            document.getElementById('singleProgressFill').style.width = `${percentage}%`;
+            document.getElementById('singleProgressText').textContent = progressText;
+            document.getElementById('singleSpeedText').textContent = speedText;
+        }
+
+        function updateParallelProgress(percentage, progressText, speedText) {
+            document.getElementById('parallelProgressFill').style.width = `${percentage}%`;
+            document.getElementById('parallelProgressText').textContent = progressText;
+            document.getElementById('parallelSpeedText').textContent = speedText;
+        }
+
+        function updateTaskList(tasks) {
+            const taskList = document.getElementById('taskList');
+            taskList.innerHTML = '';
+            
+            Object.entries(tasks).forEach(([taskId, task]) => {
+                const item = document.createElement('div');
+                item.className = 'task-item';
+                
+                const statusClass = getStatusClass(task.status);
+                const statusText = getStatusText(task.status);
+                
+                item.innerHTML = `
+                    <div>
+                        <strong>${task.title}</strong>
+                        <br>
+                        <small>${taskId}</small>
+                    </div>
+                    <div>
+                        <span class="task-status ${statusClass}">${statusText}</span>
+                        <br>
+                        <small>${task.progress_percentage.toFixed(1)}% | ${task.download_speed.toFixed(1)} MB/s</small>
+                    </div>
+                `;
+                
+                taskList.appendChild(item);
+            });
+        }
+
+        function getQualityText(quality) {
+            const qualityMap = {
+                127: '8K', 120: '4K', 116: '1080P60',
+                80: '1080P', 64: '720P', 32: '480P', 16: '360P'
+            };
+            return qualityMap[quality] || quality;
+        }
+
+        function getStatusClass(status) {
+            const statusClassMap = {
+                'pending': 'status-running',
+                'queued': 'status-running',
+                'extracting': 'status-running',
+                'downloading': 'status-running',
+                'merging': 'status-running',
+                'completed': 'status-completed',
+                'failed': 'status-failed'
+            };
+            return statusClassMap[status] || 'status-running';
+        }
+
+        function getStatusText(status) {
+            const statusTextMap = {
+                'pending': '等待中',
+                'queued': '排队中',
+                'extracting': '分析中',
+                'downloading': '下载中',
+                'merging': '合并中',
+                'completed': '已完成',
+                'failed': '失败'
+            };
+            return statusTextMap[status] || status;
+        }
+
+        // 验证SESSDATA
+        function validateSessdata(filename, event) {
+            event.stopPropagation(); // 阻止配置项点击事件
+            
+            const verifyBtn = event.target;
+            verifyBtn.disabled = true;
+            verifyBtn.textContent = '验证中...';
+            verifyBtn.style.background = '#17a2b8';
+            
+            fetch(`/api/validate-sessdata/${filename}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.valid) {
+                        verifyBtn.textContent = '✓ 可用';
+                        verifyBtn.style.background = '#28a745';
+                        verifyBtn.style.color = 'white';
+                        
+                        // 保存到缓存
+                        sessdataValidationCache[filename] = {
+                            status: 'valid',
+                            message: data.message
+                        };
+                        
+                        // 更新配置项显示
+                        const configItem = verifyBtn.closest('.config-item');
+                        const sessdataSpan = configItem.querySelector('span[style*="color: #ffc107"]');
+                        if (sessdataSpan) {
+                            sessdataSpan.innerHTML = '🔑 SESSDATA可用';
+                            sessdataSpan.style.color = '#28a745';
+                        }
+                        
+                        // 如果验证的是当前选中的配置，更新当前配置状态
+                        if (configItem.classList.contains('selected')) {
+                            const sessdataStatus = document.getElementById('sessdataStatus');
+                            const sessdataInfo = document.getElementById('sessdataInfo');
+                            const sessdataPreview = document.getElementById('sessdataPreview');
+                            
+                            sessdataStatus.innerHTML = '✅ SESSDATA可用';
+                            sessdataStatus.className = 'sessdata-status sessdata-valid';
+                            sessdataInfo.style.display = 'block';
+                            sessdataPreview.textContent = data.message;
+                        }
+                    } else {
+                        verifyBtn.textContent = '✗ 无效';
+                        verifyBtn.style.background = '#dc3545';
+                        verifyBtn.style.color = 'white';
+                        
+                        // 保存到缓存
+                        sessdataValidationCache[filename] = {
+                            status: 'invalid',
+                            message: data.message
+                        };
+                        
+                        // 更新配置项显示
+                        const configItem = verifyBtn.closest('.config-item');
+                        const sessdataSpan = configItem.querySelector('span[style*="color: #ffc107"]');
+                        if (sessdataSpan) {
+                            sessdataSpan.innerHTML = '⚠️ SESSDATA无效';
+                            sessdataSpan.style.color = '#dc3545';
+                        }
+                        
+                        // 如果验证的是当前选中的配置，更新当前配置状态
+                        if (configItem.classList.contains('selected')) {
+                            const sessdataStatus = document.getElementById('sessdataStatus');
+                            const sessdataInfo = document.getElementById('sessdataInfo');
+                            const sessdataPreview = document.getElementById('sessdataPreview');
+                            
+                            sessdataStatus.innerHTML = '⚠️ SESSDATA无效';
+                            sessdataStatus.className = 'sessdata-status sessdata-invalid';
+                            sessdataInfo.style.display = 'block';
+                            sessdataPreview.textContent = data.message;
+                        }
+                        
+                        showAlert(`SESSDATA验证失败: ${data.message}`, 'error');
+                    }
+                    
+                    setTimeout(() => {
+                        verifyBtn.remove();
+                    }, 2000);
+                })
+                .catch(error => {
+                    verifyBtn.textContent = '验证失败';
+                    verifyBtn.style.background = '#dc3545';
+                    showAlert('验证请求失败: ' + error.message, 'error');
+                    
+                    setTimeout(() => {
+                        verifyBtn.disabled = false;
+                        verifyBtn.textContent = '验证';
+                        verifyBtn.style.background = '#ffc107';
+                        verifyBtn.style.color = '#212529';
+                    }, 2000);
+                });
+        }
+    </script>
+</body>
+</html> 

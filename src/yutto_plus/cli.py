@@ -8,8 +8,8 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from yutto_plus import YuttoPlus, TaskStatus
-from config_manager import ConfigManager
+
+from . import YuttoPlus, TaskStatus, ConfigManager
 
 
 def parse_args():
@@ -27,6 +27,10 @@ def parse_args():
   # 并行下载多个视频
   %(prog)s -c 3 "https://www.bilibili.com/video/BV1LWjXzvEX1/" "https://www.bilibili.com/video/BV1234567890/"
   %(prog)s -c 2 --parallel-display simple "url1" "url2" "url3"
+  
+  # 启动Web界面
+  %(prog)s --webui                    # 启动Web UI
+  %(prog)s --webui --port 8080        # 指定端口启动Web UI
   
   # 使用配置文件
   %(prog)s --create-config high_quality  # 创建高清下载配置
@@ -55,6 +59,12 @@ def parse_args():
   使用 --list-configs 查看可用模板
   配置文件可以设置所有参数，命令行参数优先级更高
 
+Web界面功能:
+  使用 --webui 启动现代化Web界面
+  支持并行下载、配置文件管理、实时进度监控
+  使用 --port 指定Web服务器端口 (默认: 12001)
+  使用 --no-browser 禁止自动打开浏览器
+
 断点续传功能:
   默认启用断点续传，下载中断后重新运行可从断点继续
   使用 --no-resume 禁用断点续传，强制重新下载
@@ -62,11 +72,31 @@ def parse_args():
         """
     )
     
-    # 位置参数
+    # 位置参数（Web模式下可选）
     parser.add_argument(
         'urls',
-        nargs='+',
+        nargs='*',  # 改为可选，Web模式下不需要URL
         help='B站视频链接，支持多个链接进行并行下载'
+    )
+    
+    # Web界面参数
+    parser.add_argument(
+        '--webui',
+        action='store_true',
+        help='启动Web界面'
+    )
+    
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=12001,
+        help='Web界面端口 (默认: 12001)'
+    )
+    
+    parser.add_argument(
+        '--no-browser',
+        action='store_true',
+        help='启动Web界面时不自动打开浏览器'
     )
     
     # 基础参数
@@ -242,6 +272,11 @@ def main():
         args = parse_args()
         config_manager = ConfigManager()
         
+        # 处理WebUI启动
+        if args.webui:
+            start_webui(args)
+            return
+        
         # 处理配置文件相关的特殊操作
         if args.create_config:
             output_file = f"yutto-plus-{args.create_config}.json"
@@ -256,6 +291,12 @@ def main():
                 print(f"  {style}: {desc}")
             print(f"\n💡 创建配置文件: python yutto-plus.py --create-config [模板名称]")
             return
+        
+        # 验证URL（非WebUI模式下必需）
+        if not args.urls:
+            print("❌ 错误: 请提供有效的B站视频链接")
+            print("💡 提示: 使用 --webui 启动Web界面，或提供视频链接")
+            sys.exit(1)
         
         # 加载配置文件（如果指定）
         config = {}
@@ -281,11 +322,6 @@ def main():
                 description = config.get('description', '')
                 if description:
                     print(f"📝 配置: {description}")
-        
-        # 验证URL
-        if not args.urls:
-            print("❌ 错误: 请提供有效的B站视频链接")
-            sys.exit(1)
         
         # 验证所有URL
         for url in args.urls:
@@ -667,6 +703,88 @@ def merge_config_with_args(config: dict, args):
                         setattr(args, args_attr, config_value)
     
     return args
+
+
+def start_webui(args):
+    """启动Web界面"""
+    try:
+        print("🚀 启动 YuttoPlus Web UI v2.0")
+        print("=" * 50)
+        
+        # 动态导入WebUI模块
+        webui_path = Path(__file__).parent.parent.parent / "webui"
+        if not webui_path.exists():
+            print("❌ 错误: 找不到WebUI目录")
+            print("💡 请确保webui目录存在")
+            sys.exit(1)
+        
+        # 添加webui目录到路径
+        sys.path.insert(0, str(webui_path))
+        
+        try:
+            from app import socketio, app, find_available_port, open_browser_delayed
+            import threading
+        except ImportError as e:
+            print(f"❌ 错误: 无法导入WebUI模块: {e}")
+            print("💡 请确保安装了Flask和Flask-SocketIO:")
+            print("   pip install flask flask-socketio")
+            sys.exit(1)
+        
+        # 查找可用端口
+        if args.port != 12001:
+            # 用户指定了端口，直接使用
+            port = args.port
+            try:
+                import socket
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('', port))
+            except OSError:
+                print(f"❌ 错误: 端口 {port} 已被占用")
+                sys.exit(1)
+        else:
+            # 自动查找可用端口
+            port = find_available_port()
+            if not port:
+                print("❌ 无法找到可用端口")
+                sys.exit(1)
+        
+        print(f"🌐 Web UI 地址: http://localhost:{port}")
+        print("📋 功能特性:")
+        print("   • 🔥 并行下载支持")
+        print("   • ⚙️ 配置文件管理")
+        print("   • 📊 实时进度监控")
+        print("   • 🖥️ 现代化界面")
+        print("   • 🔄 多会话支持")
+        print("\n💡 使用提示:")
+        print("   • 在浏览器中打开上述地址")
+        print("   • 支持同时下载多个视频")
+        print("   • 可以加载预设配置文件")
+        print("   • 按Ctrl+C退出服务器")
+        
+        # 延迟打开浏览器（如果未禁用）
+        if not args.no_browser:
+            threading.Thread(
+                target=open_browser_delayed, 
+                args=(f"http://localhost:{port}",), 
+                daemon=True
+            ).start()
+            print("\n🌐 浏览器将自动打开...")
+        else:
+            print("\n🌐 请手动在浏览器中打开上述地址")
+        
+        print()  # 空行
+        
+        # 启动服务器
+        socketio.run(app, host='0.0.0.0', port=port, debug=False)
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Web服务器已停止")
+    except Exception as e:
+        print(f"\n❌ 启动WebUI时发生错误: {e}")
+        if hasattr(args, 'verbose') and args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

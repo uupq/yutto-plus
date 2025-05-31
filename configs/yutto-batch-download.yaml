@@ -9,9 +9,13 @@ audio_quality: 30232  # 音频质量: 128kbps (节省空间)
 output_dir: "./Batch_Downloads"  # 批量下载目录
 format: "mp4"         # 输出格式: MP4兼容性好
 
+# === 登录设置 ===
+sessdata: "eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dMDl1PfE_Vj6p6xGwdAO94TQqeW3WBhVDwSVlhXQThEYjlvRl81MmZVRGVuSk92Q3VGTHhNRDNKM21rblhwUy1keWZGQnc0N0xoelJMRlFxdzhteUNubXp4a2pyc2d2M0xrQ2llNVUzUi1HZjNxSUxnIIEC"
+
+
 # === 并行设置 ===
 concurrent: 4         # 高并发数量: 快速批量下载
-parallel_display: "simple"  # 简单显示: 减少输出干扰
+parallel_display: "table"  # 表格显示: 清晰的进度界面
 
 # === 下载内容 (精简) ===
 audio_only: false     
@@ -47,4 +51,9 @@ verbose: false        # 不显示详细信息: 减少输出
 # 大量下载建议画质选择:
 # 64 (720P): 平衡质量和大小
 # 32 (480P): 最小文件，快速下载  
-# 80 (1080P): 如果网络和存储充足 
+# 80 (1080P): 如果网络和存储充足
+
+# === 显示模式说明 ===
+# table: 完整表格界面，显示所有任务进度 (推荐)
+# simple: 简单输出，只显示基本信息
+# silent: 静默模式，最少输出 

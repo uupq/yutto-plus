@@ -1,0 +1,20 @@
+description: 高清视频下载配置 - 8K/4K收藏级
+output_dir: ./HighQuality_Downloads
+quality: 127
+audio_quality: 30251
+format: mkv
+concurrent: 2
+sessdata: eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dMDl1PfE_Vj6p6xGwdAO94TQqeW3WBhVDwSVlhXQThEYjlvRl81MmZVRGVuSk92Q3VGTHhNRDNKM21rblhwUy1keWZGQnc0N0xoelJMRlFxdzhteUNubXp4a2pyc2d2M0xrQ2llNVUzUi1HZjNxSUxnIIEC
+audio_only: false
+no_video: false
+no_danmaku: true
+no_cover: true
+overwrite: false
+enable_resume: true
+parallel_display: table
+danmaku_format: ass
+audio_format: mp3
+audio_bitrate: 192k
+video_codec: avc
+quiet: false
+verbose: false

@@ -10,6 +10,7 @@ import re
 import json
 import time
 import threading
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass
@@ -17,6 +18,13 @@ from enum import Enum
 import subprocess
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+
+
+def expand_user_path(path_str: str) -> Path:
+    """扩展用户路径，支持 ~ 符号"""
+    if path_str.startswith('~'):
+        return Path(os.path.expanduser(path_str))
+    return Path(path_str)
 
 
 class TaskStatus(Enum):
@@ -456,6 +464,10 @@ class DownloadConfig:
     audio_bitrate: str = "192k"  # 音频比特率
     # 新增断点续传配置
     enable_resume: bool = True  # 启用断点续传
+    
+    def __post_init__(self):
+        """后处理：扩展用户路径"""
+        self.default_output_dir = str(expand_user_path(self.default_output_dir))
 
 
 class BilibiliAPIClient:
@@ -621,23 +633,14 @@ class BilibiliAPIClient:
         return segments
     
     async def get_danmaku(self, aid: int, cid: int, user_info: Dict = None) -> Dict:
-        """获取弹幕数据，根据登录状态选择格式"""
-        if user_info and user_info.get("is_login", False):
-            # 已登录，使用 protobuf 格式获取更多弹幕
-            print(f"📝 [弹幕获取] 已登录用户，使用 protobuf 格式")
-            data = await self.get_protobuf_danmaku(aid, cid)
-            return {
-                "source_type": "protobuf",
-                "data": data
-            }
-        else:
-            # 未登录，使用 XML 格式
-            print(f"📝 [弹幕获取] 未登录用户，使用 XML 格式")
-            data = await self.get_xml_danmaku(cid)
-            return {
-                "source_type": "xml",
-                "data": [data]
-            }
+        """获取弹幕数据，优先使用XML格式转换为ASS（保持兼容性）"""
+        # 统一使用XML格式获取弹幕，避免protobuf兼容性问题
+        print(f"📝 [弹幕获取] 从B站API获取XML数据（将根据配置转换格式）")
+        data = await self.get_xml_danmaku(cid)
+        return {
+            "source_type": "xml",
+            "data": [data]
+        }
     
     async def get_cover_data(self, pic_url: str) -> bytes:
         """下载封面图片"""
@@ -801,7 +804,7 @@ class DownloadTask:
                 self._print_if_not_silent(f"👤 UP主: {self.video_info['uploader']}")
                 
                 # 初始化输出目录和文件名
-                output_dir = Path(self.task_config.get('output_dir', self.config.default_output_dir))
+                output_dir = expand_user_path(self.task_config.get('output_dir', self.config.default_output_dir))
                 output_dir.mkdir(parents=True, exist_ok=True)
                 filename = re.sub(r'[<>:"/\\|?*]', '_', self.video_info['title'])
                 self._output_dir = output_dir
@@ -1031,7 +1034,7 @@ class DownloadTask:
 
     async def _download_streams(self, client: BilibiliAPIClient):
         """下载视频和音频流"""
-        output_dir = Path(self.task_config.get('output_dir', self.config.default_output_dir))
+        output_dir = expand_user_path(self.task_config.get('output_dir', self.config.default_output_dir))
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # 清理文件名
@@ -1405,24 +1408,49 @@ class DownloadTask:
     async def _save_additional_files(self):
         """保存弹幕和封面"""
         if self.danmaku_data:
-            print(f"📝 正在保存弹幕...")
+            # 获取目标弹幕格式
+            target_format = self.task_config.get('danmaku_format', self.config.danmaku_format)
+            print(f"📝 正在保存弹幕 (格式: {target_format})...")
             
-            # 根据弹幕数据类型和格式保存
+            # 根据弹幕数据类型和目标格式保存
             if self.danmaku_data['source_type'] == 'xml':
-                danmaku_path = self._output_dir / f"{self._filename}.xml"
-                with open(danmaku_path, 'w', encoding='utf-8') as f:
-                    f.write(self.danmaku_data['data'][0])
+                xml_content = self.danmaku_data['data'][0]
+                
+                if target_format == 'xml':
+                    # 直接保存XML格式
+                    danmaku_path = self._output_dir / f"{self._filename}.xml"
+                    with open(danmaku_path, 'w', encoding='utf-8') as f:
+                        f.write(xml_content)
+                elif target_format == 'ass':
+                    # 转换XML为ASS格式（简化版本）
+                    danmaku_path = self._output_dir / f"{self._filename}.ass"
+                    ass_content = self._convert_xml_to_ass(xml_content)
+                    with open(danmaku_path, 'w', encoding='utf-8') as f:
+                        f.write(ass_content)
+                else:
+                    # 默认保存为XML
+                    danmaku_path = self._output_dir / f"{self._filename}.xml"
+                    with open(danmaku_path, 'w', encoding='utf-8') as f:
+                        f.write(xml_content)
             else:  # protobuf
-                if len(self.danmaku_data['data']) == 1:
+                if target_format == 'protobuf':
+                    # 保存protobuf格式
+                    if len(self.danmaku_data['data']) == 1:
+                        danmaku_path = self._output_dir / f"{self._filename}.pb"
+                        with open(danmaku_path, 'wb') as f:
+                            f.write(self.danmaku_data['data'][0])
+                    else:
+                        # 多个分段
+                        for i, segment in enumerate(self.danmaku_data['data']):
+                            danmaku_path = self._output_dir / f"{self._filename}_danmaku_{i:02d}.pb"
+                            with open(danmaku_path, 'wb') as f:
+                                f.write(segment)
+                else:
+                    # protobuf转其他格式暂不支持，保存为protobuf
+                    print(f"⚠️ protobuf转{target_format}格式暂不支持，保存为protobuf格式")
                     danmaku_path = self._output_dir / f"{self._filename}.pb"
                     with open(danmaku_path, 'wb') as f:
                         f.write(self.danmaku_data['data'][0])
-                else:
-                    # 多个分段
-                    for i, segment in enumerate(self.danmaku_data['data']):
-                        danmaku_path = self._output_dir / f"{self._filename}_danmaku_{i:02d}.pb"
-                        with open(danmaku_path, 'wb') as f:
-                            f.write(segment)
             
             print(f"✅ 弹幕保存完成")
         
@@ -1439,6 +1467,106 @@ class DownloadTask:
             with open(cover_path, 'wb') as f:
                 f.write(self.cover_data)
             print(f"✅ 封面保存完成: {cover_path.name}")
+
+    def _convert_xml_to_ass(self, xml_content: str) -> str:
+        """将XML弹幕转换为ASS格式（简化版本）"""
+        import xml.etree.ElementTree as ET
+        import html
+        
+        try:
+            root = ET.fromstring(xml_content)
+            danmaku_list = []
+            
+            # 解析弹幕
+            for danmaku in root.findall('.//d'):
+                p_attr = danmaku.get('p', '')
+                text = danmaku.text or ''
+                
+                if p_attr and text:
+                    parts = p_attr.split(',')
+                    if len(parts) >= 3:
+                        time_sec = float(parts[0])
+                        danmaku_type = int(parts[1])  # 1-3: 滚动, 4: 底部, 5: 顶部
+                        color = int(parts[3]) if len(parts) > 3 else 16777215
+                        
+                        # 转换时间为ASS格式 (h:mm:ss.cc)
+                        hours = int(time_sec // 3600)
+                        minutes = int((time_sec % 3600) // 60)
+                        seconds = int(time_sec % 60)
+                        centiseconds = int((time_sec % 1) * 100)
+                        time_str = f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
+                        
+                        # 转换颜色为ASS格式
+                        r = (color >> 16) & 0xFF
+                        g = (color >> 8) & 0xFF
+                        b = color & 0xFF
+                        color_ass = f"&H00{b:02X}{g:02X}{r:02X}"
+                        
+                        # 根据弹幕类型设置样式
+                        if danmaku_type in [1, 2, 3]:  # 滚动弹幕
+                            style = "R2L"
+                        elif danmaku_type == 4:  # 底部弹幕
+                            style = "Bottom"
+                        elif danmaku_type == 5:  # 顶部弹幕
+                            style = "Top"
+                        else:
+                            style = "R2L"
+                        
+                        # 清理文本
+                        text = html.unescape(text).replace('\n', '').replace('\r', '')
+                        
+                        danmaku_list.append({
+                            'time': time_str,
+                            'style': style,
+                            'color': color_ass,
+                            'text': text
+                        })
+            
+            # 按时间排序
+            danmaku_list.sort(key=lambda x: x['time'])
+            
+            # 生成ASS内容
+            ass_header = """[Script Info]
+Title: Bilibili Danmaku
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: R2L,SimHei,25,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: Top,SimHei,25,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,8,10,10,10,1
+Style: Bottom,SimHei,25,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+            
+            ass_events = []
+            for dm in danmaku_list:
+                # 计算结束时间（滚动弹幕持续8秒，固定弹幕持续4秒）
+                start_parts = dm['time'].split(':')
+                start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
+                
+                if dm['style'] == 'R2L':
+                    end_seconds = start_seconds + 8
+                else:
+                    end_seconds = start_seconds + 4
+                
+                end_hours = int(end_seconds // 3600)
+                end_minutes = int((end_seconds % 3600) // 60)
+                end_secs = int(end_seconds % 60)
+                end_centisecs = int((end_seconds % 1) * 100)
+                end_time = f"{end_hours}:{end_minutes:02d}:{end_secs:02d}.{end_centisecs:02d}"
+                
+                # 添加颜色标签
+                text_with_color = f"{{\\c{dm['color']}}}{dm['text']}"
+                
+                ass_events.append(f"Dialogue: 0,{dm['time']},{end_time},{dm['style']},,0,0,0,,{text_with_color}")
+            
+            return ass_header + '\n'.join(ass_events)
+            
+        except Exception as e:
+            print(f"⚠️ XML转ASS失败，保存原始XML: {e}")
+            return f"# ASS转换失败，原始XML内容：\n# {str(e)}\n\n" + xml_content
 
 
 class YuttoPlus:
@@ -1518,6 +1646,28 @@ class YuttoPlus:
         except Exception as e:
             print(f"⚠️ 验证过程出错: {e}")
     
+    def extract_video_id(self, url: str) -> Optional[str]:
+        """从URL中提取视频ID（BV号或AV号）"""
+        import re
+        
+        # 提取BV号
+        bv_match = re.search(r'BV([a-zA-Z0-9]+)', url)
+        if bv_match:
+            return f"BV{bv_match.group(1)}"
+        
+        # 提取AV号
+        av_match = re.search(r'av(\d+)', url, re.IGNORECASE)
+        if av_match:
+            return f"av{av_match.group(1)}"
+        
+        # 提取短链接
+        b23_match = re.search(r'b23\.tv/([a-zA-Z0-9]+)', url)
+        if b23_match:
+            # 对于短链接，暂时返回短链接ID，实际应该解析后再提取
+            return f"b23_{b23_match.group(1)}"
+        
+        return None
+
     def create_download_task(self, url: str, **kwargs) -> DownloadTask:
         """创建下载任务 (兼容原有API)
         
@@ -1535,10 +1685,25 @@ class YuttoPlus:
         return DownloadTask(url, self.config, kwargs)
     
     def add_download_tasks(self, urls_with_configs: List[Tuple[str, Dict]]) -> List[str]:
-        """添加多个下载任务，返回任务ID列表"""
+        """添加多个下载任务，返回任务ID列表（自动去重）"""
         task_ids = []
+        seen_video_ids = set()
+        duplicates_removed = 0
         
         for url, task_config in urls_with_configs:
+            # 提取视频ID进行去重检查
+            video_id = self.extract_video_id(url)
+            
+            if video_id:
+                if video_id in seen_video_ids:
+                    print(f"⚠️ 跳过重复视频: {video_id} - {url}")
+                    duplicates_removed += 1
+                    continue
+                seen_video_ids.add(video_id)
+            else:
+                print(f"⚠️ 无法识别视频ID，跳过链接: {url}")
+                continue
+            
             # 生成任务ID
             self.task_counter += 1
             task_id = f"task_{self.task_counter:03d}"
@@ -1558,7 +1723,15 @@ class YuttoPlus:
             self.task_manager.add_task(task_id, download_task)
             task_ids.append(task_id)
         
-        print(f"📊 已添加 {len(task_ids)} 个任务到队列")
+        # 输出统计信息
+        total_input = len(urls_with_configs)
+        total_valid = len(task_ids)
+        
+        if duplicates_removed > 0:
+            print(f"📊 链接去重统计: 输入{total_input}个，去重{duplicates_removed}个，有效{total_valid}个")
+        else:
+            print(f"📊 已添加 {total_valid} 个任务到队列")
+        
         return task_ids
     
     def start_parallel_download(self, display_mode: str = 'auto') -> None:
