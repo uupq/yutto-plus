@@ -689,9 +689,10 @@ def handle_single_download_request(data):
         # 转换为并行下载请求
         parallel_data = {
             'urls': [url],
-            'config': {'quality': quality, 'concurrent': 1}
+            'config': {'quality': quality, 'concurrent': 1},
+            'source': 'single'  # 标识为单个下载
         }
-        
+
         handle_parallel_download_request(parallel_data)
         
     except Exception as e:

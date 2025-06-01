@@ -1153,12 +1153,13 @@
             
             updateParallelProgress(0, `准备下载 ${urls.length} 个任务...`, '-');
 
-            socket.emit('parallel_download_request', {
+            socket.emit('start_parallel_download', {
                 urls: urls,
                 config: {
                     quality: quality,
                     concurrent: concurrent
-                }
+                },
+                source: 'parallel'  // 标识来源
             });
         });
 
