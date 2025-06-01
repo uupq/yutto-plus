@@ -6,7 +6,7 @@ description: "批量下载配置 - 速度优先"
 # === 基础设置 ===
 quality: 64           # 视频质量: 720P高清 (平衡质量和速度)
 audio_quality: 30232  # 音频质量: 128kbps (节省空间)
-output_dir: "./Batch_Downloads"  # 批量下载目录
+output_dir: "~/Downloads/Batch_Downloads"  # 批量下载目录
 format: "mp4"         # 输出格式: MP4兼容性好
 
 # === 登录设置 ===

@@ -7,9 +7,99 @@ yutto-plus CLI - B站视频下载器命令行工具
 import argparse
 import sys
 import time
+import re
 from pathlib import Path
+from typing import Tuple, Optional
 
 from . import YuttoPlus, TaskStatus, ConfigManager
+
+
+def parse_url_with_parts(url_string: str) -> Tuple[str, Optional[str]]:
+    """
+    解析URL字符串，提取URL和分P参数
+
+    Args:
+        url_string: 可能包含分P参数的URL字符串
+
+    Returns:
+        tuple: (clean_url, parts_selection)
+
+    Examples:
+        parse_url_with_parts("https://www.bilibili.com/video/BV123|p=1,3,5")
+        -> ("https://www.bilibili.com/video/BV123", "1,3,5")
+
+        parse_url_with_parts("https://www.bilibili.com/video/BV123")
+        -> ("https://www.bilibili.com/video/BV123", None)
+    """
+    # 使用正则表达式匹配URL末尾的分P参数
+    # 模式: |p=分P选择 (必须在字符串末尾，分P选择不能为空)
+    pattern = r'^(.+?)\|p=([^|]+)$'
+
+    match = re.match(pattern, url_string.strip())
+    if match:
+        clean_url = match.group(1).strip()
+        parts_selection = match.group(2).strip()
+
+        # 验证URL的有效性
+        if not clean_url or not ('bilibili.com' in clean_url or 'b23.tv' in clean_url):
+            raise ValueError(f"无效的B站视频链接: {clean_url}")
+
+        # 验证分P参数的基本格式（详细验证在下载器中进行）
+        if not parts_selection.strip():
+            raise ValueError(f"分P选择不能为空")
+        if not re.match(r'^[0-9,~\-\$\s]+$', parts_selection):
+            raise ValueError(f"无效的分P选择格式: {parts_selection}")
+
+        return clean_url, parts_selection
+    else:
+        # 没有分P参数，返回原URL
+        clean_url = url_string.strip()
+
+        # 验证URL的有效性
+        if not clean_url or not ('bilibili.com' in clean_url or 'b23.tv' in clean_url):
+            raise ValueError(f"无效的B站视频链接: {clean_url}")
+
+        return clean_url, None
+
+
+def validate_parts_selection(parts_selection: str) -> bool:
+    """
+    验证分P选择参数的格式
+
+    Args:
+        parts_selection: 分P选择字符串
+
+    Returns:
+        bool: 是否有效
+    """
+    if not parts_selection:
+        return False
+
+    # 允许的字符：数字、逗号、波浪号、减号、美元符号、空格
+    if not re.match(r'^[0-9,~\-\$\s]+$', parts_selection):
+        return False
+
+    # 基本格式检查（详细验证在下载器中进行）
+    # 这里只做基础的语法检查
+    try:
+        # 移除空格
+        clean_parts = parts_selection.replace(' ', '')
+
+        # 特殊情况：单独的$符号
+        if clean_parts == '$':
+            return True
+
+        # 检查是否有连续的特殊字符
+        if re.search(r'[,~\-]{2,}', clean_parts):
+            return False
+
+        # 检查是否以逗号开头或结尾
+        if clean_parts.startswith(',') or clean_parts.endswith(','):
+            return False
+
+        return True
+    except:
+        return False
 
 
 def parse_args():
@@ -29,6 +119,10 @@ def parse_args():
   %(prog)s -p "~3" "https://www.bilibili.com/video/BV1unjgzqEms/"       # 下载前3P
   %(prog)s -p "-2~" "https://www.bilibili.com/video/BV1unjgzqEms/"      # 下载后2P
   %(prog)s --no-folder "https://www.bilibili.com/video/BV1unjgzqEms/"   # 不创建文件夹
+
+  # URL级别分P选择（新功能）
+  %(prog)s "https://www.bilibili.com/video/BV1111111111|p=1,3,5" "https://www.bilibili.com/video/BV2222222222|p=2-4"
+  %(prog)s -p "1-3" "https://www.bilibili.com/video/BV1111111111|p=5" "https://www.bilibili.com/video/BV2222222222"
 
   # 并行下载多个视频
   %(prog)s -c 3 "https://www.bilibili.com/video/BV1LWjXzvEX1/" "https://www.bilibili.com/video/BV1234567890/"
@@ -76,6 +170,12 @@ Web界面功能:
   使用 -p/--episodes 选择要下载的分P，支持范围和列表语法
   支持语法: "1,3,5-8", "~3", "-2~", "$" 等
   使用 --no-folder 禁止为多P视频创建文件夹
+
+  URL级别分P选择（新功能）:
+  在URL末尾使用 |p=分P选择 为单个视频指定分P
+  语法: "URL|p=1,3,5" 或 "URL|p=2-4"
+  URL级别配置优先级高于全局 -p 参数
+  支持混合使用：全局配置 + URL级别配置
 
 断点续传功能:
   默认启用断点续传，下载中断后重新运行可从断点继续
@@ -348,11 +448,25 @@ def main():
                 if description:
                     print(f"📝 配置: {description}")
         
-        # 验证所有URL
-        for url in args.urls:
-            if not ('bilibili.com' in url or 'b23.tv' in url):
-                print(f"❌ 错误: 无效的B站视频链接: {url}")
+        # 解析和验证所有URL
+        parsed_urls = []
+        for url_string in args.urls:
+            try:
+                clean_url, url_parts = parse_url_with_parts(url_string)
+                parsed_urls.append((clean_url, url_parts))
+
+                # 如果URL包含分P参数，显示解析结果
+                if url_parts and not args.quiet:
+                    print(f"🔍 解析URL: {clean_url}")
+                    print(f"   📺 分P选择: {url_parts}")
+
+            except ValueError as e:
+                print(f"❌ 错误: {e}")
                 sys.exit(1)
+
+        # 更新args.urls为解析后的URL列表（保持向后兼容）
+        args.urls = [url for url, _ in parsed_urls]
+        args.parsed_urls = parsed_urls  # 添加解析结果
         
         # 判断是单个下载还是并行下载
         if len(args.urls) == 1 and args.concurrent == 1:
@@ -379,7 +493,15 @@ def main():
 def single_download_mode(args):
     """单个下载模式"""
     url = args.urls[0]
-    
+
+    # 获取URL级别的分P参数（如果有）
+    url_parts = None
+    if hasattr(args, 'parsed_urls') and args.parsed_urls:
+        _, url_parts = args.parsed_urls[0]
+
+    # 确定最终的分P选择：URL级别 > 全局参数
+    final_episodes_selection = url_parts if url_parts else args.episodes
+
     # 创建下载器
     downloader = YuttoPlus(
         sessdata=args.sessdata,
@@ -391,27 +513,32 @@ def single_download_mode(args):
         overwrite=args.overwrite,
         enable_resume=not args.no_resume
     )
-    
+
     # 处理资源选择逻辑
     require_video, require_audio, require_danmaku, require_cover = get_requirements(args)
-    
+
     # 验证参数逻辑
     if not any([require_video, require_audio, require_danmaku, require_cover]):
         print("❌ 错误: 没有选择任何下载内容")
         sys.exit(1)
-    
+
     # 创建下载任务
     if not args.quiet:
         print(f"📋 创建下载任务...")
         print(f"🔗 URL: {url}")
         print(f"🎯 质量: {args.quality} (视频) / {args.audio_quality} (音频)")
         print(f"📁 输出: {args.output}")
-        
+
+        # 显示分P选择信息
+        if final_episodes_selection:
+            source = "URL级别" if url_parts else "全局参数"
+            print(f"📺 分P选择: {final_episodes_selection} ({source})")
+
         # 显示将要下载的内容
         download_items = get_download_items(args, require_video, require_audio, require_danmaku, require_cover)
         print(f"📦 内容: {', '.join(download_items)}")
         print()
-    
+
     task = downloader.create_download_task(
         url,
         quality=args.quality,
@@ -426,7 +553,7 @@ def single_download_mode(args):
         audio_format=args.audio_format,
         audio_only=args.audio_only,
         audio_bitrate=args.audio_bitrate,
-        episodes_selection=args.episodes,
+        episodes_selection=final_episodes_selection,
         create_folder_for_multi_p=not args.no_folder
     )
     
@@ -479,7 +606,15 @@ def parallel_download_mode(args):
     
     # 创建任务列表
     tasks = []
-    for url in args.urls:
+    for i, url in enumerate(args.urls):
+        # 获取URL级别的分P参数（如果有）
+        url_parts = None
+        if hasattr(args, 'parsed_urls') and args.parsed_urls and i < len(args.parsed_urls):
+            _, url_parts = args.parsed_urls[i]
+
+        # 确定最终的分P选择：URL级别 > 全局参数
+        final_episodes_selection = url_parts if url_parts else args.episodes
+
         task_config = {
             "quality": args.quality,
             "audio_quality": args.audio_quality,
@@ -493,10 +628,15 @@ def parallel_download_mode(args):
             "audio_format": args.audio_format,
             "audio_only": args.audio_only,
             "audio_bitrate": args.audio_bitrate,
-            "episodes_selection": args.episodes,
+            "episodes_selection": final_episodes_selection,
             "create_folder_for_multi_p": not args.no_folder
         }
         tasks.append((url, task_config))
+
+        # 在详细模式下显示每个任务的分P配置
+        if not args.quiet and final_episodes_selection:
+            source = "URL级别" if url_parts else "全局参数"
+            print(f"   📺 任务 {i+1} 分P选择: {final_episodes_selection} ({source})")
     
     # 添加任务并开始下载
     task_ids = downloader.add_download_tasks(tasks)

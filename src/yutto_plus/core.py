@@ -1253,50 +1253,242 @@ class DownloadTask:
     async def _download_part_streams(self, client: BilibiliAPIClient, selected_video: Optional[Dict],
                                    selected_audio: Optional[Dict], output_dir: Path, filename: str,
                                    part_index: int = 1, total_parts: int = 1) -> Path:
-        """下载分P的音视频流"""
+        """下载分P的音视频流（支持断点续传）"""
+        # 首先检查最终文件是否已经存在
+        output_format = self.task_config.get('output_format', self.config.default_output_format)
+        final_output_path = output_dir / f"{filename}.{output_format}"
+
+        # 如果最终文件已存在且不覆盖，直接返回
+        if final_output_path.exists() and not self.config.overwrite:
+            file_size = final_output_path.stat().st_size
+            self._print_if_not_silent(f"✅ P{part_index} 文件已存在，跳过下载: {final_output_path.name} ({file_size / (1024*1024):.1f} MB)")
+            return final_output_path
+
         # 临时文件列表
         temp_files = []
 
-        # 下载视频流
+        # 预先获取所有流的大小信息（支持断点续传）
+        stream_info = []
+
+        self._print_if_not_silent(f"🔍 P{part_index} 正在检测文件大小...")
+
+        # 检查视频流
         if selected_video:
             video_path = output_dir / f"{filename}_video.m4s"
-            await self._download_stream_to_file(
-                client, selected_video['url'], video_path,
-                stream_id=f"video_p{part_index}",
-                description=f"P{part_index} 视频流"
-            )
             temp_files.append(video_path)
 
-        # 下载音频流
+            # 获取视频流大小
+            existing_size = 0
+            if self.config.enable_resume and not self.config.overwrite and video_path.exists():
+                existing_size = video_path.stat().st_size
+
+            try:
+                total_size, completed = await self._get_stream_size_with_retry(
+                    client, selected_video['url'], existing_size
+                )
+
+                if completed:
+                    self._print_if_not_silent(f"✅ P{part_index} 视频流已完整: {total_size / (1024*1024):.1f} MB")
+                else:
+                    if existing_size > 0:
+                        self._print_if_not_silent(f"📹 P{part_index} 视频流: {total_size / (1024*1024):.1f} MB (已下载: {existing_size / (1024*1024):.1f} MB)")
+                    else:
+                        self._print_if_not_silent(f"📹 P{part_index} 视频流: {total_size / (1024*1024):.1f} MB")
+
+                stream_info.append({
+                    'type': 'video',
+                    'path': video_path,
+                    'url': selected_video['url'],
+                    'existing_size': existing_size,
+                    'total_size': total_size,
+                    'completed': completed,
+                    'stream_id': f"video_p{part_index}",
+                    'description': f"P{part_index} 视频流"
+                })
+            except Exception as e:
+                raise Exception(f"P{part_index} 获取视频流大小失败: {e}")
+
+        # 检查音频流
         if selected_audio:
             audio_path = output_dir / f"{filename}_audio.m4s"
-            await self._download_stream_to_file(
-                client, selected_audio['url'], audio_path,
-                stream_id=f"audio_p{part_index}",
-                description=f"P{part_index} 音频流"
-            )
             temp_files.append(audio_path)
+
+            # 获取音频流大小
+            existing_size = 0
+            if self.config.enable_resume and not self.config.overwrite and audio_path.exists():
+                existing_size = audio_path.stat().st_size
+
+            try:
+                total_size, completed = await self._get_stream_size_with_retry(
+                    client, selected_audio['url'], existing_size
+                )
+
+                if completed:
+                    self._print_if_not_silent(f"✅ P{part_index} 音频流已完整: {total_size / (1024*1024):.1f} MB")
+                else:
+                    if existing_size > 0:
+                        self._print_if_not_silent(f"🔊 P{part_index} 音频流: {total_size / (1024*1024):.1f} MB (已下载: {existing_size / (1024*1024):.1f} MB)")
+                    else:
+                        self._print_if_not_silent(f"🔊 P{part_index} 音频流: {total_size / (1024*1024):.1f} MB")
+
+                stream_info.append({
+                    'type': 'audio',
+                    'path': audio_path,
+                    'url': selected_audio['url'],
+                    'existing_size': existing_size,
+                    'total_size': total_size,
+                    'completed': completed,
+                    'stream_id': f"audio_p{part_index}",
+                    'description': f"P{part_index} 音频流"
+                })
+            except Exception as e:
+                raise Exception(f"P{part_index} 获取音频流大小失败: {e}")
+
+        if not stream_info:
+            raise Exception(f"P{part_index} 没有流需要下载")
+
+        # 计算总大小和已下载大小
+        total_size_all = sum(info['total_size'] for info in stream_info)
+        total_existing_all = sum(info['existing_size'] for info in stream_info)
+
+        # 显示文件信息
+        self._print_if_not_silent(f"📊 P{part_index} 总大小: {total_size_all / (1024*1024):.1f} MB")
+        if total_existing_all > 0:
+            self._print_if_not_silent(f"🔄 P{part_index} 已下载: {total_existing_all / (1024*1024):.1f} MB ({total_existing_all/total_size_all*100:.1f}%)")
+
+        # 检查是否所有流都已完成
+        total_completed = sum(1 for info in stream_info if info['completed'])
+        if total_completed == len(stream_info):
+            self._print_if_not_silent(f"✅ P{part_index} 视频已完整下载，跳过下载步骤")
+        else:
+            # 开始下载
+            self._print_if_not_silent(f"📥 P{part_index} 开始下载...")
+
+            # 检查是否有断点续传
+            has_resume = any(info['existing_size'] > 0 and not info['completed'] for info in stream_info)
+            if has_resume:
+                self._print_if_not_silent(f"🔄 P{part_index} 检测到断点续传，继续下载")
+
+            # 下载所有未完成的流
+            download_tasks = []
+            for info in stream_info:
+                if not info['completed']:
+                    download_tasks.append(self._download_part_stream_with_info(client, info, part_index))
+
+            # 并发下载所有流
+            if download_tasks:
+                await asyncio.gather(*download_tasks)
+
+        # 输出最终下载统计
+        total_downloaded = sum(info['total_size'] for info in stream_info)
+        self._print_if_not_silent(f"✅ P{part_index} 下载完成: {total_downloaded / (1024*1024):.1f} MB")
 
         if not temp_files:
             raise Exception("没有下载任何流")
 
-        # 合并流
-        audio_only = self.task_config.get('audio_only', False)
-        if audio_only:
-            audio_format = self.task_config.get('audio_format', 'mp3')
-            output_filepath = output_dir / f"{filename}.{audio_format}"
-            await self._merge_part_streams_audio(temp_files, output_filepath)
+        # 合并音视频流
+        output_format = self.task_config.get('output_format', self.config.default_output_format)
+        output_filepath = output_dir / f"{filename}.{output_format}"
+
+        # 检查可用的临时文件
+        available_files = [f for f in temp_files if f.exists()]
+
+        if not available_files:
+            raise Exception("没有可用的流文件进行合并")
+
+        # 构建 FFmpeg 命令
+        cmd = ["ffmpeg", "-y"]  # -y 覆盖输出文件
+
+        # 添加输入文件
+        for temp_file in available_files:
+            cmd.extend(["-i", str(temp_file)])
+
+        # 根据文件数量决定输出设置
+        if len(available_files) == 1:
+            # 只有一个流，直接复制
+            cmd.extend(["-c", "copy", str(output_filepath)])
+            self._print_if_not_silent(f"    📝 P{part_index} 单流模式: 直接复制")
         else:
-            output_format = self.task_config.get('output_format', self.config.default_output_format)
-            output_filepath = output_dir / f"{filename}.{output_format}"
-            await self._merge_part_streams_video(temp_files, output_filepath)
+            # 多个流，需要合并
+            cmd.extend([
+                "-c:v", "copy",  # 视频流复制
+                "-c:a", "copy",  # 音频流复制
+                str(output_filepath)
+            ])
+            self._print_if_not_silent(f"    📝 P{part_index} 合并模式: 合并 {len(available_files)} 个流")
+
+        # 执行合并
+        import subprocess
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise Exception(f"P{part_index} FFmpeg 处理失败: {result.stderr}")
 
         # 清理临时文件
         for temp_file in temp_files:
             if temp_file.exists():
                 temp_file.unlink()
 
+        self._print_if_not_silent(f"✅ P{part_index} 合并完成: {output_filepath.name}")
+
         return output_filepath
+
+    async def _download_part_stream_with_info(self, client: BilibiliAPIClient, info: Dict, part_index: int):
+        """使用预获取信息下载单个分P流（支持断点续传）"""
+        stream_type = info['type']
+        output_path = info['path']
+        url = info['url']
+        existing_size = info['existing_size']
+        total_size = info['total_size']
+        stream_id = info['stream_id']
+        description = info['description']
+
+        # 如果已完整下载，直接跳过
+        if info['completed']:
+            self._print_if_not_silent(f"✅ {description} 已完整，跳过下载")
+            return
+
+        try:
+            # 开始实际下载
+            current_size = existing_size
+            start_time = time.time()
+            last_speed_calc = start_time
+
+            # 设置下载的Range头（如果需要）
+            headers = {}
+            if existing_size > 0:
+                headers['Range'] = f'bytes={existing_size}-'
+                self._print_if_not_silent(f"🔄 {description} 断点续传，从 {existing_size / (1024*1024):.1f} MB 开始")
+
+            # 选择文件打开模式
+            file_mode = 'ab' if existing_size > 0 else 'wb'
+
+            async with client.session.stream('GET', url, headers=headers) as response:
+                response.raise_for_status()
+
+                with open(output_path, file_mode) as f:
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        f.write(chunk)
+                        current_size += len(chunk)
+
+                        # 计算速度（只计算本次下载的速度）
+                        current_time = time.time()
+                        if current_time > last_speed_calc:
+                            speed = (current_size - existing_size) / (current_time - start_time)
+                        else:
+                            speed = 0
+
+                        # 更新进度（如果有进度回调）
+                        if hasattr(self, '_update_stream_progress'):
+                            self._update_stream_progress(stream_id, current_size, total_size, speed)
+
+                        last_speed_calc = current_time
+
+            self._print_if_not_silent(f"✅ {description} 下载完成: {current_size / (1024*1024):.1f} MB")
+
+        except Exception as e:
+            self._print_if_not_silent(f"❌ {description} 下载失败: {e}")
+            raise
 
     async def _download_stream_to_file(self, client: BilibiliAPIClient, url: str, output_path: Path,
                                      stream_id: str = "stream", description: str = "下载中"):
