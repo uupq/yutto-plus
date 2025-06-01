@@ -10,7 +10,7 @@ output_dir: "~/Downloads/Bilibili"  # 输出目录
 format: "mp4"         # 输出格式
 
 # === 并行设置 ===
-concurrent: 3         # 并发下载数量
+concurrent: 2         # 并发下载数量
 parallel_display: "table"  # 显示模式: table(表格) / simple(简单) / silent(静默)
 
 # === 下载内容 ===
@@ -24,6 +24,10 @@ danmaku_format: "ass" # 弹幕格式: xml / ass / protobuf
 audio_format: "mp3"   # 音频格式: mp3 / wav / flac / m4a / aac
 audio_bitrate: "192k" # 音频比特率
 video_codec: "avc"    # 视频编码: avc / hevc / av1
+
+# === 多P视频设置 ===
+create_folder_for_multi_p: true  # 为多P视频创建文件夹
+# episodes_selection: "1,3,5-8"  # 分P选择 (可选): 支持范围和排除语法
 
 # === 其他设置 ===
 overwrite: false      # 是否覆盖现有文件

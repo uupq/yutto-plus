@@ -27,6 +27,91 @@ def expand_user_path(path_str: str) -> Path:
     return Path(path_str)
 
 
+def parse_episodes_selection(episodes_str: str, total_episodes: int) -> List[int]:
+    """解析分P选择字符串，返回要下载的分P索引列表（从0开始）
+
+    Args:
+        episodes_str: 分P选择字符串，如 "1,3,5-8" 或 "~3,10,-2~"
+        total_episodes: 总分P数量
+
+    Returns:
+        List[int]: 要下载的分P索引列表（从0开始）
+
+    Examples:
+        parse_episodes_selection("1,3,5-8", 10) -> [0, 2, 4, 5, 6, 7]
+        parse_episodes_selection("~3", 10) -> [0, 1, 2]
+        parse_episodes_selection("-2~", 10) -> [8, 9]
+    """
+    if not episodes_str or episodes_str.strip() == "":
+        # 空字符串表示全选
+        return list(range(total_episodes))
+
+    episodes_str = episodes_str.strip()
+
+    # 处理特殊符号 $ 表示最后一集
+    episodes_str = episodes_str.replace('$', str(total_episodes))
+
+    selected_indices = set()
+
+    # 按逗号分割各个选择部分
+    parts = episodes_str.split(',')
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        if '~' in part:
+            # 范围选择
+            if part.startswith('~'):
+                # ~3 表示从第1集到第3集
+                end_str = part[1:]
+                start_idx = 0
+                end_idx = int(end_str) - 1 if end_str else total_episodes - 1
+            elif part.endswith('~'):
+                # -2~ 表示从倒数第2集到最后一集
+                start_str = part[:-1]
+                start_num = int(start_str)
+                if start_num < 0:
+                    start_idx = total_episodes + start_num
+                else:
+                    start_idx = start_num - 1
+                end_idx = total_episodes - 1
+            else:
+                # 5~8 表示从第5集到第8集
+                start_str, end_str = part.split('~', 1)
+                start_num = int(start_str) if start_str else 1
+                end_num = int(end_str) if end_str else total_episodes
+
+                if start_num < 0:
+                    start_idx = total_episodes + start_num
+                else:
+                    start_idx = start_num - 1
+
+                if end_num < 0:
+                    end_idx = total_episodes + end_num
+                else:
+                    end_idx = end_num - 1
+
+            # 添加范围内的所有索引
+            for i in range(max(0, start_idx), min(total_episodes, end_idx + 1)):
+                selected_indices.add(i)
+        else:
+            # 单个选择
+            episode_num = int(part)
+            if episode_num < 0:
+                # 负数表示倒数第几集
+                idx = total_episodes + episode_num
+            else:
+                # 正数表示第几集（从1开始）
+                idx = episode_num - 1
+
+            if 0 <= idx < total_episodes:
+                selected_indices.add(idx)
+
+    return sorted(list(selected_indices))
+
+
 class TaskStatus(Enum):
     """任务状态枚举"""
     PENDING = "pending"       # 等待中
@@ -116,7 +201,7 @@ class TaskManager:
         """任务完成回调"""
         with self._lock:
             if task_id in self.running_tasks:
-                download_task = self.running_tasks.pop(task_id)
+                self.running_tasks.pop(task_id)
                 
                 if success:
                     self.completed_tasks[task_id] = (success, result_info, error)
@@ -316,10 +401,24 @@ class ProgressMonitor:
             # 显示任务行
             active_items = list(active_tasks.items())[:display_count]
             for task_id, progress in active_items:
-                # 处理标题长度 - 根据实际显示宽度截断
+                # 处理标题长度 - 根据实际显示宽度截断，并添加多P信息
                 title = "未知标题"
                 if progress.video_info and 'title' in progress.video_info:
                     full_title = progress.video_info['title']
+
+                    # 添加多P信息前缀
+                    if progress.video_info.get('is_multi_p'):
+                        total_pages = progress.video_info.get('total_pages', 0)
+                        current_part = progress.video_info.get('current_part')
+
+                        if current_part:
+                            # 显示当前分P信息
+                            part_index = current_part['index']
+                            full_title = f"[{part_index}/{total_pages}P] {full_title}"
+                        else:
+                            # 显示总分P数
+                            full_title = f"[{total_pages}P] {full_title}"
+
                     if get_display_width(full_title) > 31:  # 为"..."留3个字符空间
                         # 逐字符截断直到合适长度
                         truncated = ""
@@ -392,8 +491,24 @@ class ProgressMonitor:
         for task_id, progress in running_tasks[:2]:  # 最多显示2个运行中的任务
             title = "未知"
             if progress.video_info and 'title' in progress.video_info:
-                title = progress.video_info['title'][:30]
-            
+                title = progress.video_info['title']
+
+                # 添加多P信息前缀
+                if progress.video_info.get('is_multi_p'):
+                    total_pages = progress.video_info.get('total_pages', 0)
+                    current_part = progress.video_info.get('current_part')
+
+                    if current_part:
+                        # 显示当前分P信息
+                        part_index = current_part['index']
+                        title = f"[{part_index}/{total_pages}P] {title}"
+                    else:
+                        # 显示总分P数
+                        title = f"[{total_pages}P] {title}"
+
+                # 限制长度
+                title = title[:30]
+
             status_icon = "📥" if progress.status == TaskStatus.DOWNLOADING else "🔍"
             print(f"  {status_icon} {task_id}: {title} ({progress.progress_percentage:.1f}%)")
     
@@ -464,7 +579,10 @@ class DownloadConfig:
     audio_bitrate: str = "192k"  # 音频比特率
     # 新增断点续传配置
     enable_resume: bool = True  # 启用断点续传
-    
+    # 新增多P视频相关配置
+    episodes_selection: Optional[str] = None  # 分P选择，如 "1,3,5-8"
+    create_folder_for_multi_p: bool = True  # 为多P视频创建文件夹
+
     def __post_init__(self):
         """后处理：扩展用户路径"""
         self.default_output_dir = str(expand_user_path(self.default_output_dir))
@@ -706,6 +824,11 @@ class DownloadTask:
         self.status = new_status
         if self.parent_manager:
             self.parent_manager.on_task_status_change(self.task_id, old_status, new_status)
+
+            # 如果有视频信息，也一并更新
+            if self.video_info and hasattr(self.parent_manager, 'tasks_progress'):
+                if self.task_id in self.parent_manager.tasks_progress:
+                    self.parent_manager.tasks_progress[self.task_id].video_info = self.video_info
             
     def _report_completion(self, success: bool, result_info: Dict = None, error: str = None):
         """报告任务完成"""
@@ -796,128 +919,518 @@ class DownloadTask:
             # 1. 获取视频信息
             self._report_status_change(TaskStatus.EXTRACTING)
             self._print_if_not_silent(f"🔍 正在分析视频: {self.url}")
-            
+
             async with BilibiliAPIClient(self.config.sessdata) as client:
                 self.video_info = await client.get_video_info(self.url)
-                
+
                 self._print_if_not_silent(f"✅ 视频解析成功: {self.video_info['title']}")
                 self._print_if_not_silent(f"👤 UP主: {self.video_info['uploader']}")
-                
-                # 初始化输出目录和文件名
-                output_dir = expand_user_path(self.task_config.get('output_dir', self.config.default_output_dir))
-                output_dir.mkdir(parents=True, exist_ok=True)
-                filename = re.sub(r'[<>:"/\\|?*]', '_', self.video_info['title'])
-                self._output_dir = output_dir
-                self._filename = filename
-                
-                # 获取用户信息（用于弹幕下载）
-                user_info = None
-                if self.config.sessdata:
-                    try:
-                        user_info = await client.get_user_info()
-                    except:
-                        user_info = {"is_login": False, "vip_status": False}
-                
-                # 获取播放地址
-                page = self.video_info['pages'][0]
-                cid = page['cid']
-                
-                # 根据配置决定下载什么内容
-                require_video = self.task_config.get('require_video', self.config.require_video)
-                require_audio = self.task_config.get('require_audio', self.config.require_audio)
-                require_danmaku = self.task_config.get('require_danmaku', self.config.require_danmaku)
-                require_cover = self.task_config.get('require_cover', self.config.require_cover)
-                
-                # 检查是否需要下载任何内容
-                if not any([require_video, require_audio, require_danmaku, require_cover]):
-                    raise Exception("没有选择任何下载内容")
-                
-                videos, audios = [], []
-                if require_video or require_audio:
-                    videos, audios = await client.get_playurl(
-                        self.video_info['aid'],
-                        self.video_info['bvid'],
-                        cid
-                    )
-                
-                # 选择最佳流（如果需要）
-                if require_video:
-                    self.selected_video = self._select_best_video(videos)
-                if require_audio:
-                    self.selected_audio = self._select_best_audio(audios)
-                
-                self._print_if_not_silent(f"🎯 流选择完成:")
-                if self.selected_video:
-                    self._print_if_not_silent(f"    📹 视频: {self.selected_video['codec'].upper()} {self.selected_video['width']}x{self.selected_video['height']}")
-                if self.selected_audio:
-                    self._print_if_not_silent(f"    🔊 音频: {self.selected_audio['codec'].upper()} 质量:{self.selected_audio['quality']}")
-                
-                # 下载弹幕
-                if require_danmaku:
-                    self._print_if_not_silent(f"📝 正在下载弹幕...")
-                    self.danmaku_data = await client.get_danmaku(
-                        self.video_info['aid'],
-                        cid,
-                        user_info
-                    )
-                    self._print_if_not_silent(f"✅ 弹幕下载完成 ({self.danmaku_data['source_type']} 格式)")
-                
-                # 下载封面
-                if require_cover:
-                    self._print_if_not_silent(f"🖼️ 正在下载封面...")
-                    self.cover_data = await client.get_cover_data(self.video_info['pic'])
-                    self._print_if_not_silent(f"✅ 封面下载完成 ({len(self.cover_data)} 字节)")
-                
-                # 立即通知流信息可用
-                if self._stream_info_callback:
-                    stream_info = self.get_selected_streams_info()
-                    if stream_info:
-                        self._stream_info_callback(stream_info)
-                
-                # 2. 开始下载媒体文件
-                if require_video or require_audio:
-                    self._report_status_change(TaskStatus.DOWNLOADING)
-                    await self._download_streams(client)
-                    
-                    # 3. 合并文件
-                    self._report_status_change(TaskStatus.MERGING)
-                    
-                    # 通知合并状态
-                    if self._stream_info_callback:
-                        # 根据模式显示不同的状态
-                        audio_only = self.task_config.get('audio_only', False)
-                        if audio_only:
-                            self._stream_info_callback({'status': 'merging', 'message': '正在转换音频格式...'})
-                        else:
-                            self._stream_info_callback({'status': 'merging', 'message': '正在合并音视频...'})
-                    
-                    await self._merge_streams()
-                
-                # 4. 保存弹幕和封面
-                await self._save_additional_files()
-                
-                # 5. 完成
-                self._report_status_change(TaskStatus.COMPLETED)
-                self._print_if_not_silent(f"🎉 下载完成")
-                
-                # 通知完成
-                result_info = self._build_result_info()
-                self._report_completion(True, result_info, None)
-                
-                if self._completion_callback:
-                    self._completion_callback(True, result_info, None)
-                    
+
+                # 检查是否为多P视频
+                total_pages = len(self.video_info['pages'])
+                is_multi_p = total_pages > 1
+
+                if is_multi_p:
+                    self._print_if_not_silent(f"📺 检测到多P视频，共 {total_pages} 个分P")
+
+                    # 更新视频信息，添加多P标识
+                    self.video_info['is_multi_p'] = True
+                    self.video_info['total_pages'] = total_pages
+
+                    # 立即报告状态变化，确保视频信息传递到进度监控
+                    self._report_status_change(TaskStatus.EXTRACTING)
+
+                    await self._download_multi_p_video(client)
+                else:
+                    self._print_if_not_silent(f"📺 单P视频")
+
+                    # 更新视频信息，添加单P标识
+                    self.video_info['is_multi_p'] = False
+                    self.video_info['total_pages'] = 1
+
+                    # 立即报告状态变化，确保视频信息传递到进度监控
+                    self._report_status_change(TaskStatus.EXTRACTING)
+
+                    await self._download_single_p_video(client)
+
         except Exception as e:
             self.error_message = str(e)
             self.status = TaskStatus.FAILED
             self._print_if_not_silent(f"❌ 下载失败: {self.error_message}")
-            
+
             # 通知失败
             self._report_completion(False, None, self.error_message)
-            
+
             if self._completion_callback:
                 self._completion_callback(False, None, self.error_message)
-    
+
+    async def _download_multi_p_video(self, client: BilibiliAPIClient):
+        """下载多P视频"""
+        # 解析分P选择
+        episodes_selection = self.task_config.get('episodes_selection', self.config.episodes_selection)
+        total_pages = len(self.video_info['pages'])
+
+        if episodes_selection:
+            selected_indices = parse_episodes_selection(episodes_selection, total_pages)
+            self._print_if_not_silent(f"📋 选择下载分P: {[i+1 for i in selected_indices]} (共 {len(selected_indices)} 个)")
+        else:
+            # 默认下载全部
+            selected_indices = list(range(total_pages))
+            self._print_if_not_silent(f"📋 下载全部分P: 1-{total_pages}")
+
+        if not selected_indices:
+            raise Exception("没有选择任何分P进行下载")
+
+        # 创建多P视频的文件夹结构
+        base_output_dir = expand_user_path(self.task_config.get('output_dir', self.config.default_output_dir))
+        create_folder = self.task_config.get('create_folder_for_multi_p', self.config.create_folder_for_multi_p)
+
+        if create_folder:
+            # 为多P视频创建专门的文件夹
+            folder_name = re.sub(r'[<>:"/\\|?*]', '_', self.video_info['title'])
+            video_output_dir = base_output_dir / folder_name
+            video_output_dir.mkdir(parents=True, exist_ok=True)
+            self._print_if_not_silent(f"📁 创建视频文件夹: {video_output_dir}")
+        else:
+            video_output_dir = base_output_dir
+            video_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 下载选中的分P
+        downloaded_parts = []
+        failed_parts = []
+
+        for i, page_index in enumerate(selected_indices):
+            page = self.video_info['pages'][page_index]
+            part_title = page.get('part', f"P{page_index + 1}")
+
+            self._print_if_not_silent(f"\n📥 下载分P {page_index + 1}/{total_pages}: {part_title}")
+
+            # 更新当前分P信息到视频信息中，用于进度显示
+            self.video_info['current_part'] = {
+                'index': page_index + 1,
+                'title': part_title,
+                'total': total_pages
+            }
+
+            # 报告状态变化，更新进度显示
+            self._report_status_change(TaskStatus.DOWNLOADING)
+
+            try:
+                # 为每个分P创建单独的下载任务
+                clean_part_title = re.sub(r'[<>:"/\\|?*]', '_', part_title)
+                part_filename = f"P{page_index + 1:02d}_{clean_part_title}"
+
+                result = await self._download_single_part(
+                    client,
+                    page,
+                    video_output_dir,
+                    part_filename,
+                    page_index + 1,
+                    total_pages
+                )
+
+                downloaded_parts.append({
+                    'index': page_index + 1,
+                    'title': part_title,
+                    'filepath': result['output_filepath']
+                })
+
+                self._print_if_not_silent(f"✅ 分P {page_index + 1} 下载完成")
+
+            except Exception as e:
+                error_msg = f"分P {page_index + 1} 下载失败: {str(e)}"
+                self._print_if_not_silent(f"❌ {error_msg}")
+                failed_parts.append({
+                    'index': page_index + 1,
+                    'title': part_title,
+                    'error': str(e)
+                })
+
+        # 完成多P下载
+        if downloaded_parts:
+            self._report_status_change(TaskStatus.COMPLETED)
+            self._print_if_not_silent(f"\n🎉 多P视频下载完成!")
+            self._print_if_not_silent(f"✅ 成功: {len(downloaded_parts)} 个分P")
+            if failed_parts:
+                self._print_if_not_silent(f"❌ 失败: {len(failed_parts)} 个分P")
+
+            # 构建结果信息
+            result_info = {
+                'type': 'multi_p',
+                'total_parts': total_pages,
+                'downloaded_parts': downloaded_parts,
+                'failed_parts': failed_parts,
+                'output_dir': str(video_output_dir),
+                'video_title': self.video_info['title']
+            }
+
+            self._report_completion(True, result_info, None)
+
+            if self._completion_callback:
+                self._completion_callback(True, result_info, None)
+        else:
+            raise Exception("所有分P下载都失败了")
+
+    async def _download_single_p_video(self, client: BilibiliAPIClient):
+        """下载单P视频（原有逻辑）"""
+        # 初始化输出目录和文件名
+        output_dir = expand_user_path(self.task_config.get('output_dir', self.config.default_output_dir))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filename = re.sub(r'[<>:"/\\|?*]', '_', self.video_info['title'])
+        self._output_dir = output_dir
+        self._filename = filename
+
+        # 获取用户信息（用于弹幕下载）
+        user_info = None
+        if self.config.sessdata:
+            try:
+                user_info = await client.get_user_info()
+            except:
+                user_info = {"is_login": False, "vip_status": False}
+
+        # 获取播放地址
+        page = self.video_info['pages'][0]
+        cid = page['cid']
+
+        # 根据配置决定下载什么内容
+        require_video = self.task_config.get('require_video', self.config.require_video)
+        require_audio = self.task_config.get('require_audio', self.config.require_audio)
+        require_danmaku = self.task_config.get('require_danmaku', self.config.require_danmaku)
+        require_cover = self.task_config.get('require_cover', self.config.require_cover)
+
+        # 检查是否需要下载任何内容
+        if not any([require_video, require_audio, require_danmaku, require_cover]):
+            raise Exception("没有选择任何下载内容")
+
+        videos, audios = [], []
+        if require_video or require_audio:
+            videos, audios = await client.get_playurl(
+                self.video_info['aid'],
+                self.video_info['bvid'],
+                cid
+            )
+
+        # 选择最佳流（如果需要）
+        if require_video:
+            self.selected_video = self._select_best_video(videos)
+        if require_audio:
+            self.selected_audio = self._select_best_audio(audios)
+
+        self._print_if_not_silent(f"🎯 流选择完成:")
+        if self.selected_video:
+            self._print_if_not_silent(f"    📹 视频: {self.selected_video['codec'].upper()} {self.selected_video['width']}x{self.selected_video['height']}")
+        if self.selected_audio:
+            self._print_if_not_silent(f"    🔊 音频: {self.selected_audio['codec'].upper()} 质量:{self.selected_audio['quality']}")
+
+        # 下载弹幕
+        if require_danmaku:
+            self._print_if_not_silent(f"📝 正在下载弹幕...")
+            self.danmaku_data = await client.get_danmaku(
+                self.video_info['aid'],
+                cid,
+                user_info
+            )
+            self._print_if_not_silent(f"✅ 弹幕下载完成 ({self.danmaku_data['source_type']} 格式)")
+
+        # 下载封面
+        if require_cover:
+            self._print_if_not_silent(f"🖼️ 正在下载封面...")
+            self.cover_data = await client.get_cover_data(self.video_info['pic'])
+            self._print_if_not_silent(f"✅ 封面下载完成 ({len(self.cover_data)} 字节)")
+
+        # 立即通知流信息可用
+        if self._stream_info_callback:
+            stream_info = self.get_selected_streams_info()
+            if stream_info:
+                self._stream_info_callback(stream_info)
+
+        # 2. 开始下载媒体文件
+        if require_video or require_audio:
+            self._report_status_change(TaskStatus.DOWNLOADING)
+            await self._download_streams(client)
+
+            # 3. 合并文件
+            self._report_status_change(TaskStatus.MERGING)
+
+            # 通知合并状态
+            if self._stream_info_callback:
+                # 根据模式显示不同的状态
+                audio_only = self.task_config.get('audio_only', False)
+                if audio_only:
+                    self._stream_info_callback({'status': 'merging', 'message': '正在转换音频格式...'})
+                else:
+                    self._stream_info_callback({'status': 'merging', 'message': '正在合并音视频...'})
+
+            await self._merge_streams()
+
+        # 4. 保存弹幕和封面
+        await self._save_additional_files()
+
+        # 5. 完成
+        self._report_status_change(TaskStatus.COMPLETED)
+        self._print_if_not_silent(f"🎉 下载完成")
+
+        # 通知完成
+        result_info = self._build_result_info()
+        self._report_completion(True, result_info, None)
+
+        if self._completion_callback:
+            self._completion_callback(True, result_info, None)
+
+    async def _download_single_part(self, client: BilibiliAPIClient, page: Dict, output_dir: Path,
+                                   filename: str, part_index: int, total_parts: int) -> Dict:
+        """下载单个分P
+
+        Args:
+            client: API客户端
+            page: 分P信息
+            output_dir: 输出目录
+            filename: 文件名（不含扩展名）
+            part_index: 当前分P索引（从1开始）
+            total_parts: 总分P数
+
+        Returns:
+            Dict: 下载结果信息
+        """
+        cid = page['cid']
+
+        # 获取用户信息（用于弹幕下载）
+        user_info = None
+        if self.config.sessdata:
+            try:
+                user_info = await client.get_user_info()
+            except:
+                user_info = {"is_login": False, "vip_status": False}
+
+        # 根据配置决定下载什么内容
+        require_video = self.task_config.get('require_video', self.config.require_video)
+        require_audio = self.task_config.get('require_audio', self.config.require_audio)
+        require_danmaku = self.task_config.get('require_danmaku', self.config.require_danmaku)
+        require_cover = self.task_config.get('require_cover', self.config.require_cover)
+
+        # 检查是否需要下载任何内容
+        if not any([require_video, require_audio, require_danmaku, require_cover]):
+            raise Exception("没有选择任何下载内容")
+
+        # 获取播放地址
+        videos, audios = [], []
+        if require_video or require_audio:
+            videos, audios = await client.get_playurl(
+                self.video_info['aid'],
+                self.video_info['bvid'],
+                cid
+            )
+
+        # 选择最佳流
+        selected_video = None
+        selected_audio = None
+        if require_video:
+            selected_video = self._select_best_video(videos)
+        if require_audio:
+            selected_audio = self._select_best_audio(audios)
+
+        # 下载媒体文件
+        output_filepath = None
+        if require_video or require_audio:
+            output_filepath = await self._download_part_streams(
+                client, selected_video, selected_audio, output_dir, filename, part_index, total_parts
+            )
+
+        # 下载弹幕
+        if require_danmaku:
+            await self._download_part_danmaku(client, cid, output_dir, filename)
+
+        # 下载封面（只在第一个分P时下载）
+        if require_cover and part_index == 1:
+            await self._download_part_cover(client, output_dir, filename)
+
+        return {
+            'output_filepath': output_filepath,
+            'part_index': part_index,
+            'cid': cid
+        }
+
+    async def _download_part_streams(self, client: BilibiliAPIClient, selected_video: Optional[Dict],
+                                   selected_audio: Optional[Dict], output_dir: Path, filename: str,
+                                   part_index: int = 1, total_parts: int = 1) -> Path:
+        """下载分P的音视频流"""
+        # 临时文件列表
+        temp_files = []
+
+        # 下载视频流
+        if selected_video:
+            video_path = output_dir / f"{filename}_video.m4s"
+            await self._download_stream_to_file(
+                client, selected_video['url'], video_path,
+                stream_id=f"video_p{part_index}",
+                description=f"P{part_index} 视频流"
+            )
+            temp_files.append(video_path)
+
+        # 下载音频流
+        if selected_audio:
+            audio_path = output_dir / f"{filename}_audio.m4s"
+            await self._download_stream_to_file(
+                client, selected_audio['url'], audio_path,
+                stream_id=f"audio_p{part_index}",
+                description=f"P{part_index} 音频流"
+            )
+            temp_files.append(audio_path)
+
+        if not temp_files:
+            raise Exception("没有下载任何流")
+
+        # 合并流
+        audio_only = self.task_config.get('audio_only', False)
+        if audio_only:
+            audio_format = self.task_config.get('audio_format', 'mp3')
+            output_filepath = output_dir / f"{filename}.{audio_format}"
+            await self._merge_part_streams_audio(temp_files, output_filepath)
+        else:
+            output_format = self.task_config.get('output_format', self.config.default_output_format)
+            output_filepath = output_dir / f"{filename}.{output_format}"
+            await self._merge_part_streams_video(temp_files, output_filepath)
+
+        # 清理临时文件
+        for temp_file in temp_files:
+            if temp_file.exists():
+                temp_file.unlink()
+
+        return output_filepath
+
+    async def _download_stream_to_file(self, client: BilibiliAPIClient, url: str, output_path: Path,
+                                     stream_id: str = "stream", description: str = "下载中"):
+        """下载单个流到文件"""
+        import time
+
+        # 检查断点续传
+        existing_size = 0
+        if self.config.enable_resume and not self.config.overwrite and output_path.exists():
+            existing_size = output_path.stat().st_size
+
+        # 设置下载的Range头（如果需要）
+        headers = {}
+        if existing_size > 0:
+            headers['Range'] = f'bytes={existing_size}-'
+
+        # 选择文件打开模式
+        file_mode = 'ab' if existing_size > 0 else 'wb'
+
+        async with client.session.stream('GET', url, headers=headers) as response:
+            response.raise_for_status()
+
+            # 获取文件总大小
+            content_length = response.headers.get('content-length')
+            if content_length:
+                total_size = int(content_length) + existing_size
+            else:
+                total_size = 0
+
+            downloaded_bytes = existing_size
+            start_time = time.time()
+            last_update_time = start_time
+
+            with open(output_path, file_mode) as f:
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    f.write(chunk)
+                    downloaded_bytes += len(chunk)
+
+                    # 计算速度和更新进度
+                    current_time = time.time()
+                    if current_time - last_update_time >= 0.5:  # 每0.5秒更新一次
+                        elapsed_time = current_time - start_time
+                        speed_bps = (downloaded_bytes - existing_size) / elapsed_time if elapsed_time > 0 else 0
+
+                        # 更新进度
+                        self._update_stream_progress(stream_id, downloaded_bytes, total_size, speed_bps)
+                        last_update_time = current_time
+
+    async def _merge_part_streams_audio(self, temp_files: List[Path], output_filepath: Path):
+        """合并分P的音频流"""
+        audio_format = self.task_config.get('audio_format', 'mp3')
+        audio_bitrate = self.task_config.get('audio_bitrate', '192k')
+
+        # 构建 FFmpeg 音频转换命令
+        input_file = temp_files[0]  # 音频文件
+        cmd = ["ffmpeg", "-y", "-i", str(input_file)]
+
+        # 强制禁用视频流和字幕流，只处理音频
+        cmd.extend(["-vn", "-sn"])
+
+        # 根据音频格式设置编码参数
+        if audio_format == 'mp3':
+            cmd.extend(["-codec:a", "libmp3lame", "-b:a", audio_bitrate, "-ar", "44100"])
+        elif audio_format == 'wav':
+            cmd.extend(["-codec:a", "pcm_s16le", "-ar", "44100"])
+        elif audio_format == 'flac':
+            cmd.extend(["-codec:a", "flac", "-ar", "44100"])
+        elif audio_format == 'm4a':
+            cmd.extend(["-codec:a", "aac", "-b:a", audio_bitrate, "-ar", "44100"])
+        elif audio_format == 'aac':
+            cmd.extend(["-codec:a", "aac", "-b:a", audio_bitrate, "-ar", "44100"])
+        else:
+            cmd.extend(["-codec:a", "copy"])
+
+        cmd.extend(["-map", "0:a:0"])  # 只映射第一个音频流
+        cmd.append(str(output_filepath))
+
+        # 执行命令
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"音频转换失败: {result.stderr}")
+
+    async def _merge_part_streams_video(self, temp_files: List[Path], output_filepath: Path):
+        """合并分P的视频流"""
+        # 构建 FFmpeg 命令
+        cmd = ["ffmpeg", "-y"]  # -y 覆盖输出文件
+
+        # 添加输入文件
+        for temp_file in temp_files:
+            cmd.extend(["-i", str(temp_file)])
+
+        # 根据文件数量决定输出设置
+        if len(temp_files) == 1:
+            # 只有一个流，直接复制
+            cmd.extend(["-c", "copy", str(output_filepath)])
+        else:
+            # 多个流，需要合并
+            cmd.extend(["-c:v", "copy", "-c:a", "copy", str(output_filepath)])
+
+        # 执行命令
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"视频合并失败: {result.stderr}")
+
+    async def _download_part_danmaku(self, client: BilibiliAPIClient, cid: int, output_dir: Path, filename: str):
+        """下载分P的弹幕"""
+        danmaku_data = await client.get_danmaku(self.video_info['aid'], cid)
+        danmaku_format = self.task_config.get('danmaku_format', self.config.danmaku_format)
+
+        if danmaku_format == 'xml':
+            danmaku_path = output_dir / f"{filename}.xml"
+            with open(danmaku_path, 'w', encoding='utf-8') as f:
+                f.write(danmaku_data['data'][0])
+        elif danmaku_format == 'ass':
+            # 这里需要实现XML到ASS的转换，暂时保存为XML
+            danmaku_path = output_dir / f"{filename}.xml"
+            with open(danmaku_path, 'w', encoding='utf-8') as f:
+                f.write(danmaku_data['data'][0])
+
+    async def _download_part_cover(self, client: BilibiliAPIClient, output_dir: Path, filename: str):
+        """下载分P的封面（通常只在第一个分P时下载）"""
+        cover_data = await client.get_cover_data(self.video_info['pic'])
+
+        # 从URL中提取文件扩展名
+        pic_url = self.video_info['pic']
+        if '.' in pic_url:
+            ext = pic_url.split('.')[-1].split('?')[0]  # 去掉URL参数
+        else:
+            ext = 'jpg'  # 默认扩展名
+
+        cover_path = output_dir / f"{filename}_cover.{ext}"
+        with open(cover_path, 'wb') as f:
+            f.write(cover_data)
+
     def _select_best_video(self, videos: List[Dict]) -> Optional[Dict]:
         """选择最佳视频流"""
         if not videos:

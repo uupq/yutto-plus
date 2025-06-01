@@ -14,7 +14,7 @@ sessdata: "eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dM
 
 
 # === 并行设置 ===
-concurrent: 4         # 高并发数量: 快速批量下载
+concurrent: 2         # 高并发数量: 快速批量下载
 parallel_display: "table"  # 表格显示: 清晰的进度界面
 
 # === 下载内容 (精简) ===

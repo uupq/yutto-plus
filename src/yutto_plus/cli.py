@@ -23,7 +23,13 @@ def parse_args():
   %(prog)s "https://www.bilibili.com/video/BV1LWjXzvEX1/"
   %(prog)s -q 127 -o "./Downloads" "https://www.bilibili.com/video/BV1LWjXzvEX1/"
   %(prog)s --audio-only -af mp3 -ab 192k "https://www.bilibili.com/video/BV1LWjXzvEX1/"
-  
+
+  # 多P视频下载
+  %(prog)s -p "1,3,5~8" "https://www.bilibili.com/video/BV1unjgzqEms/"  # 下载指定分P
+  %(prog)s -p "~3" "https://www.bilibili.com/video/BV1unjgzqEms/"       # 下载前3P
+  %(prog)s -p "-2~" "https://www.bilibili.com/video/BV1unjgzqEms/"      # 下载后2P
+  %(prog)s --no-folder "https://www.bilibili.com/video/BV1unjgzqEms/"   # 不创建文件夹
+
   # 并行下载多个视频
   %(prog)s -c 3 "https://www.bilibili.com/video/BV1LWjXzvEX1/" "https://www.bilibili.com/video/BV1234567890/"
   %(prog)s -c 2 --parallel-display simple "url1" "url2" "url3"
@@ -64,6 +70,12 @@ Web界面功能:
   支持并行下载、配置文件管理、实时进度监控
   使用 --port 指定Web服务器端口 (默认: 12001)
   使用 --no-browser 禁止自动打开浏览器
+
+多P视频支持:
+  自动检测多P视频，为多P视频创建专门文件夹
+  使用 -p/--episodes 选择要下载的分P，支持范围和列表语法
+  支持语法: "1,3,5-8", "~3", "-2~", "$" 等
+  使用 --no-folder 禁止为多P视频创建文件夹
 
 断点续传功能:
   默认启用断点续传，下载中断后重新运行可从断点继续
@@ -248,7 +260,20 @@ Web界面功能:
         action='store_true',
         help='列出可用的配置模板并退出'
     )
-    
+
+    # 多P视频参数
+    parser.add_argument(
+        '-p', '--episodes',
+        type=str,
+        help='选择要下载的分P，支持范围和列表，如 "1,3,5~8" 或 "~3,10,-2~"'
+    )
+
+    parser.add_argument(
+        '--no-folder',
+        action='store_true',
+        help='多P视频不创建文件夹，直接保存到输出目录'
+    )
+
     return parser.parse_args()
 
 
@@ -400,7 +425,9 @@ def single_download_mode(args):
         danmaku_format=args.danmaku_format,
         audio_format=args.audio_format,
         audio_only=args.audio_only,
-        audio_bitrate=args.audio_bitrate
+        audio_bitrate=args.audio_bitrate,
+        episodes_selection=args.episodes,
+        create_folder_for_multi_p=not args.no_folder
     )
     
     # 设置回调并运行单个任务
@@ -465,7 +492,9 @@ def parallel_download_mode(args):
             "danmaku_format": args.danmaku_format,
             "audio_format": args.audio_format,
             "audio_only": args.audio_only,
-            "audio_bitrate": args.audio_bitrate
+            "audio_bitrate": args.audio_bitrate,
+            "episodes_selection": args.episodes,
+            "create_folder_for_multi_p": not args.no_folder
         }
         tasks.append((url, task_config))
     
@@ -587,15 +616,38 @@ def setup_single_task_callbacks(task, args):
         nonlocal last_status
         if not args.quiet:
             print()  # 换行
-            
+
         if success:
             if not args.quiet:
-                print("✅ 下载完成!")
-                print(f"📁 文件路径: {result_info['output_filepath']}")
-                print(f"📺 视频流: {result_info['selected_video_stream_info']}")
-                print(f"🔊 音频流: {result_info['selected_audio_stream_info']}")
+                if result_info.get('type') == 'multi_p':
+                    # 多P视频结果
+                    print("✅ 多P视频下载完成!")
+                    print(f"📁 输出目录: {result_info['output_dir']}")
+                    print(f"📺 视频标题: {result_info['video_title']}")
+                    print(f"📊 下载统计: {len(result_info['downloaded_parts'])}/{result_info['total_parts']} 个分P")
+
+                    if result_info['downloaded_parts']:
+                        print("✅ 成功下载的分P:")
+                        for part in result_info['downloaded_parts']:
+                            print(f"   P{part['index']:02d}: {part['title']}")
+
+                    if result_info['failed_parts']:
+                        print("❌ 失败的分P:")
+                        for part in result_info['failed_parts']:
+                            print(f"   P{part['index']:02d}: {part['title']} ({part['error']})")
+                else:
+                    # 单P视频结果
+                    print("✅ 下载完成!")
+                    print(f"📁 文件路径: {result_info['output_filepath']}")
+                    if 'selected_video_stream_info' in result_info:
+                        print(f"📺 视频流: {result_info['selected_video_stream_info']}")
+                    if 'selected_audio_stream_info' in result_info:
+                        print(f"🔊 音频流: {result_info['selected_audio_stream_info']}")
             else:
-                print(f"✅ {result_info['output_filepath']}")
+                if result_info.get('type') == 'multi_p':
+                    print(f"✅ 多P视频: {result_info['output_dir']}")
+                else:
+                    print(f"✅ {result_info['output_filepath']}")
         else:
             print(f"❌ 下载失败: {error_message}")
             sys.exit(1)
@@ -637,7 +689,7 @@ def merge_config_with_args(config: dict, args):
     # 创建一个参数映射，将配置文件的键映射到args属性
     config_to_args_mapping = {
         'quality': 'quality',
-        'audio_quality': 'audio_quality', 
+        'audio_quality': 'audio_quality',
         'output_dir': 'output',
         'format': 'format',
         'overwrite': 'overwrite',
@@ -654,7 +706,15 @@ def merge_config_with_args(config: dict, args):
         'video_codec': 'video_codec',
         'quiet': 'quiet',
         'verbose': 'verbose',
-        'sessdata': 'sessdata'
+        'sessdata': 'sessdata',
+        'episodes_selection': 'episodes',
+        'create_folder_for_multi_p': 'no_folder'  # 注意这个是反向的
+    }
+
+    # 忽略的配置项（不会产生警告）
+    ignored_config_keys = {
+        'description',  # 配置文件描述信息
+        # 可以在这里添加其他需要忽略的配置项
     }
     
     # 只有当命令行参数是默认值时，才使用配置文件的值
@@ -665,11 +725,15 @@ def merge_config_with_args(config: dict, args):
             config_value = config[config_key]
             current_value = getattr(args, args_attr, None)
             
-            # 特殊处理enable_resume（配置文件中是enable_resume，命令行是no_resume）
+            # 特殊处理反向参数
             if config_key == 'enable_resume':
                 # 如果命令行没有指定--no-resume，使用配置文件的enable_resume设置
                 if not args.no_resume:  # 默认情况下no_resume是False
                     args.no_resume = not config_value
+            elif config_key == 'create_folder_for_multi_p':
+                # 如果命令行没有指定--no-folder，使用配置文件的create_folder_for_multi_p设置
+                if not args.no_folder:  # 默认情况下no_folder是False
+                    args.no_folder = not config_value
             else:
                 # 对于其他参数，只有当命令行参数是默认值时才使用配置文件的值
                 # 这里简化处理：除了一些特殊情况，都直接使用配置文件的值
@@ -701,7 +765,12 @@ def merge_config_with_args(config: dict, args):
                     # 对于sessdata，如果命令行没有指定且配置文件有值，则使用配置文件
                     if not current_value and config_value:
                         setattr(args, args_attr, config_value)
-    
+
+    # 检查是否有未识别的配置项
+    for config_key in config:
+        if config_key not in config_to_args_mapping and config_key not in ignored_config_keys:
+            print(f"⚠️  未知配置项: {config_key}")
+
     return args
 
 

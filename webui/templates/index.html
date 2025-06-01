@@ -704,6 +704,20 @@
                             <label for="editEnableResume">⏯️ 启用断点续传</label>
                         </div>
                     </div>
+
+                    <!-- 多P视频设置 -->
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editCreateFolderForMultiP">
+                            <label for="editCreateFolderForMultiP">📁 为多P视频创建文件夹</label>
+                        </div>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label for="editEpisodesSelection">📺 分P选择 (可选)</label>
+                        <input type="text" id="editEpisodesSelection" placeholder="例如: 1,3,5-8 或 ~3,1~5,-2~ (留空下载全部)">
+                        <small style="color: #666;">支持范围选择和排除语法，详见文档</small>
+                    </div>
                 </div>
                 
                 <div class="btn-group">
@@ -881,6 +895,15 @@
                             sessdataIndicator = '<span style="color: #6c757d;">🔓 未配置SESSDATA</span>';
                         }
                         
+                        // 多P信息
+                        let multiPInfo = '';
+                        if (config.create_folder_for_multi_p !== false) {
+                            multiPInfo += '<span>📁 多P文件夹</span>';
+                        }
+                        if (config.episodes_selection) {
+                            multiPInfo += `<span>📺 分P: ${config.episodes_selection}</span>`;
+                        }
+
                         item.innerHTML = `
                             <h4>📄 ${config.name}</h4>
                             <p>${config.description}</p>
@@ -888,6 +911,7 @@
                                 <span>质量: ${getQualityText(config.quality)}</span>
                                 <span>并发: ${config.concurrent}</span>
                                 <span>音频: ${config.audio_only ? '仅音频' : '视频+音频'}</span>
+                                ${multiPInfo}
                                 ${sessdataIndicator}
                             </div>
                             <div class="config-item-actions">
@@ -942,13 +966,17 @@
             document.getElementById('editFormat').value = config.format || 'mp4';
             document.getElementById('editConcurrent').value = config.concurrent || 2;
             document.getElementById('editSessdata').value = config.sessdata || '';
-            
+
             document.getElementById('editAudioOnly').checked = config.audio_only || false;
             document.getElementById('editNoVideo').checked = config.no_video || false;
             document.getElementById('editNoDanmaku').checked = config.no_danmaku || false;
             document.getElementById('editNoCover').checked = config.no_cover || false;
             document.getElementById('editOverwrite').checked = config.overwrite || false;
             document.getElementById('editEnableResume').checked = config.enable_resume !== false;
+
+            // 多P视频设置
+            document.getElementById('editCreateFolderForMultiP').checked = config.create_folder_for_multi_p !== false;
+            document.getElementById('editEpisodesSelection').value = config.episodes_selection || '';
         }
 
         function closeConfigModal() {
@@ -987,6 +1015,8 @@
                 });
             
             function saveConfigData() {
+                const episodesSelection = document.getElementById('editEpisodesSelection').value.trim();
+
                 const configData = {
                     description: document.getElementById('editDescription').value,
                     output_dir: document.getElementById('editOutputDir').value,
@@ -995,14 +1025,18 @@
                     format: document.getElementById('editFormat').value,
                     concurrent: parseInt(document.getElementById('editConcurrent').value),
                     sessdata: newSessdata || undefined,
-                    
+
                     audio_only: document.getElementById('editAudioOnly').checked,
                     no_video: document.getElementById('editNoVideo').checked,
                     no_danmaku: document.getElementById('editNoDanmaku').checked,
                     no_cover: document.getElementById('editNoCover').checked,
                     overwrite: document.getElementById('editOverwrite').checked,
                     enable_resume: document.getElementById('editEnableResume').checked,
-                    
+
+                    // 多P视频设置
+                    create_folder_for_multi_p: document.getElementById('editCreateFolderForMultiP').checked,
+                    episodes_selection: episodesSelection || undefined,
+
                     // 其他默认值
                     parallel_display: 'table',
                     danmaku_format: 'ass',
@@ -1175,10 +1209,18 @@
                 // 这是单个下载，更新单个下载进度
                 const taskId = taskIds[0];
                 const task = tasks[taskId];
-                
+
+                // 格式化状态文本，包含多P信息
+                let statusText = `${task.title} - ${getStatusText(task.status)}`;
+                if (task.is_multi_p && task.current_part) {
+                    const currentPart = task.current_part.index;
+                    const totalParts = task.total_pages;
+                    statusText += ` (分P: ${currentPart}/${totalParts})`;
+                }
+
                 updateSingleProgress(
                     task.progress_percentage,
-                    `${task.title} - ${task.status}`,
+                    statusText,
                     `${task.download_speed.toFixed(1)} MB/s`
                 );
             } else {
@@ -1244,19 +1286,30 @@
         function updateTaskList(tasks) {
             const taskList = document.getElementById('taskList');
             taskList.innerHTML = '';
-            
+
             Object.entries(tasks).forEach(([taskId, task]) => {
                 const item = document.createElement('div');
                 item.className = 'task-item';
-                
+
                 const statusClass = getStatusClass(task.status);
                 const statusText = getStatusText(task.status);
-                
+
+                // 格式化多P信息
+                let multiPInfo = '';
+                if (task.is_multi_p && task.current_part) {
+                    const currentPart = task.current_part.index;
+                    const totalParts = task.total_pages;
+                    multiPInfo = `<br><small style="color: #007bff;">📺 分P: ${currentPart}/${totalParts}</small>`;
+                } else if (task.is_multi_p) {
+                    multiPInfo = `<br><small style="color: #007bff;">📺 多P视频 (${task.total_pages}P)</small>`;
+                }
+
                 item.innerHTML = `
                     <div>
                         <strong>${task.title}</strong>
                         <br>
                         <small>${taskId}</small>
+                        ${multiPInfo}
                     </div>
                     <div>
                         <span class="task-status ${statusClass}">${statusText}</span>
@@ -1264,7 +1317,7 @@
                         <small>${task.progress_percentage.toFixed(1)}% | ${task.download_speed.toFixed(1)} MB/s</small>
                     </div>
                 `;
-                
+
                 taskList.appendChild(item);
             });
         }

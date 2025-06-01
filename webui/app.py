@@ -32,6 +32,28 @@ downloader = None
 config_manager = ConfigManager()
 active_downloads = {}  # {session_id: {downloader, tasks}}
 
+def format_task_title_with_multi_p(progress):
+    """格式化任务标题，添加多P信息"""
+    if not progress.video_info:
+        return '未知标题'
+
+    title = progress.video_info.get('title', '未知标题')
+
+    # 添加多P信息
+    if progress.video_info.get('is_multi_p'):
+        total_pages = progress.video_info.get('total_pages', 0)
+        current_part = progress.video_info.get('current_part')
+
+        if current_part:
+            # 显示当前分P信息
+            part_index = current_part['index']
+            title = f"[{part_index}/{total_pages}P] {title}"
+        else:
+            # 显示总分P数
+            title = f"[{total_pages}P] {title}"
+
+    return title
+
 def ensure_webui_config():
     """确保WebUI配置文件存在"""
     config_dir = Path(__file__).parent.parent / 'configs'
@@ -284,6 +306,18 @@ audio_format: "{config_data.get('audio_format', 'mp3')}"   # 音频格式: mp3 /
 audio_bitrate: "{config_data.get('audio_bitrate', '192k')}" # 音频比特率
 video_codec: "{config_data.get('video_codec', 'avc')}"    # 视频编码: avc / hevc / av1
 
+# === 多P视频设置 ===
+create_folder_for_multi_p: {str(config_data.get('create_folder_for_multi_p', True)).lower()}  # 为多P视频创建文件夹"""
+
+    # 添加分P选择配置
+    episodes_selection_value = config_data.get('episodes_selection', '')
+    if episodes_selection_value:
+        config_template += f'\nepisodes_selection: "{episodes_selection_value}"  # 分P选择: {episodes_selection_value}'
+    else:
+        config_template += '\n# episodes_selection: "1,3,5-8"  # 分P选择 (可选): 支持范围和排除语法'
+
+    config_template += f"""
+
 # === 其他设置 ===
 overwrite: {str(config_data.get('overwrite', False)).lower()}      # 是否覆盖现有文件
 enable_resume: {str(config_data.get('enable_resume', True)).lower()}   # 是否启用断点续传
@@ -514,9 +548,12 @@ def handle_parallel_download_request(data):
                     'tasks': {
                         task_id: {
                             'status': progress.status.value,
-                            'title': progress.video_info.get('title', '未知标题') if progress.video_info else '未知标题',
+                            'title': format_task_title_with_multi_p(progress),
                             'progress_percentage': progress.progress_percentage,
-                            'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0
+                            'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0,
+                            'is_multi_p': progress.video_info.get('is_multi_p', False) if progress.video_info else False,
+                            'current_part': progress.video_info.get('current_part') if progress.video_info else None,
+                            'total_pages': progress.video_info.get('total_pages', 1) if progress.video_info else 1
                         }
                         for task_id, progress in tasks_progress.items()
                     }
