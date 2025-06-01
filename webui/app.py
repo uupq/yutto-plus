@@ -17,6 +17,7 @@ import os
 import sys
 import requests
 import random
+import re
 
 # 添加src目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -31,6 +32,53 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 downloader = None
 config_manager = ConfigManager()
 active_downloads = {}  # {session_id: {downloader, tasks}}
+
+def parse_url_with_parts(url_string: str):
+    """
+    解析URL字符串，提取URL和分P参数
+
+    Args:
+        url_string: 可能包含分P参数的URL字符串
+
+    Returns:
+        tuple: (clean_url, parts_selection)
+
+    Examples:
+        parse_url_with_parts("https://www.bilibili.com/video/BV123|p=1,3,5")
+        -> ("https://www.bilibili.com/video/BV123", "1,3,5")
+
+        parse_url_with_parts("https://www.bilibili.com/video/BV123")
+        -> ("https://www.bilibili.com/video/BV123", None)
+    """
+    # 使用正则表达式匹配URL末尾的分P参数
+    # 模式: |p=分P选择 (必须在字符串末尾，分P选择不能为空)
+    pattern = r'^(.+?)\|p=([^|]+)$'
+
+    match = re.match(pattern, url_string.strip())
+    if match:
+        clean_url = match.group(1).strip()
+        parts_selection = match.group(2).strip()
+
+        # 验证URL的有效性
+        if not clean_url or not ('bilibili.com' in clean_url or 'b23.tv' in clean_url):
+            raise ValueError(f"无效的B站视频链接: {clean_url}")
+
+        # 验证分P参数的基本格式（详细验证在下载器中进行）
+        if not parts_selection.strip():
+            raise ValueError(f"分P选择不能为空")
+        if not re.match(r'^[0-9,~\-\$\s]+$', parts_selection):
+            raise ValueError(f"无效的分P选择格式: {parts_selection}")
+
+        return clean_url, parts_selection
+    else:
+        # 没有分P参数，返回原URL
+        clean_url = url_string.strip()
+
+        # 验证URL的有效性
+        if not clean_url or not ('bilibili.com' in clean_url or 'b23.tv' in clean_url):
+            raise ValueError(f"无效的B站视频链接: {clean_url}")
+
+        return clean_url, None
 
 def format_task_title_with_multi_p(progress):
     """格式化任务标题，添加多P信息"""
@@ -473,13 +521,14 @@ def handle_load_config(data):
         print(f'❌ [错误] 加载配置文件时出错: {e}')
         emit('error', {'message': f'加载配置文件时出错: {str(e)}'})
 
-@socketio.on('parallel_download_request')
+@socketio.on('start_parallel_download')
 def handle_parallel_download_request(data):
     """处理并行下载请求"""
     try:
         session_id = request.sid
         urls = data.get('urls', [])
         custom_config = data.get('config', {})
+        source = data.get('source', 'parallel')  # 获取来源标识
         
         if not urls:
             emit('error', {'message': '请输入至少一个有效的 B站视频链接'})
@@ -499,23 +548,38 @@ def handle_parallel_download_request(data):
         
         # 准备任务配置
         tasks = []
-        for url in urls:
-            if url.strip():
-                task_config = {
-                    "quality": merged_config.get('quality', 80),
-                    "audio_quality": merged_config.get('audio_quality', 30280),
-                    "output_dir": merged_config.get('output_dir', './Downloads'),
-                    "output_format": merged_config.get('format', 'mp4'),
-                    "require_video": not merged_config.get('no_video', False),
-                    "require_audio": True,
-                    "require_danmaku": not merged_config.get('no_danmaku', False),
-                    "require_cover": not merged_config.get('no_cover', False),
-                    "danmaku_format": merged_config.get('danmaku_format', 'ass'),
-                    "audio_format": merged_config.get('audio_format', 'mp3'),
-                    "audio_only": merged_config.get('audio_only', False),
-                    "audio_bitrate": merged_config.get('audio_bitrate', '192k')
-                }
-                tasks.append((url.strip(), task_config))
+        for url_string in urls:
+            if url_string.strip():
+                try:
+                    # 解析URL和分P参数
+                    clean_url, url_parts = parse_url_with_parts(url_string)
+
+                    # 如果URL包含分P参数，显示解析结果
+                    if url_parts:
+                        print(f"🔍 解析URL: {clean_url}")
+                        print(f"   📺 分P选择: {url_parts}")
+
+                    task_config = {
+                        "quality": merged_config.get('quality', 80),
+                        "audio_quality": merged_config.get('audio_quality', 30280),
+                        "output_dir": merged_config.get('output_dir', './Downloads'),
+                        "output_format": merged_config.get('format', 'mp4'),
+                        "require_video": not merged_config.get('no_video', False),
+                        "require_audio": True,
+                        "require_danmaku": not merged_config.get('no_danmaku', False),
+                        "require_cover": not merged_config.get('no_cover', False),
+                        "danmaku_format": merged_config.get('danmaku_format', 'ass'),
+                        "audio_format": merged_config.get('audio_format', 'mp3'),
+                        "audio_only": merged_config.get('audio_only', False),
+                        "audio_bitrate": merged_config.get('audio_bitrate', '192k'),
+                        "episodes_selection": url_parts  # 添加分P选择参数
+                    }
+                    tasks.append((clean_url, task_config))
+
+                except ValueError as e:
+                    print(f"❌ URL解析错误: {e}")
+                    emit('error', {'message': f'URL解析错误: {str(e)}'})
+                    return
         
         if not tasks:
             emit('error', {'message': '没有有效的下载链接'})
@@ -536,6 +600,7 @@ def handle_parallel_download_request(data):
                 
                 # 发送整体进度
                 socketio.emit('parallel_progress', {
+                    'source': source,  # 传递来源标识
                     'overall': {
                         'total_tasks': overall_progress.total_tasks,
                         'completed_tasks': overall_progress.completed_tasks,
