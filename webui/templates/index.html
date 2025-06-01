@@ -249,24 +249,137 @@
 
         .task-item {
             background: #f8f9fa;
-            padding: 10px 15px;
-            border-radius: 8px;
-            margin-bottom: 8px;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            border-left: 4px solid #667eea;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .task-item:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .task-header {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+
+        .task-info {
+            flex: 1;
+            margin-right: 15px;
+        }
+
+        .task-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+
+        .task-id {
+            font-size: 10px;
+            color: #666;
+            font-family: monospace;
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .task-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 5px;
+            flex-wrap: wrap;
+        }
+
+        .task-progress-container {
+            margin-top: 10px;
+        }
+
+        .task-progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+
+        .task-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .task-progress-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .task-stats {
+            display: flex;
+            gap: 12px;
             align-items: center;
         }
 
         .task-status {
-            padding: 4px 8px;
+            padding: 4px 10px;
             border-radius: 12px;
-            font-size: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .status-pending { background: #fff3cd; color: #856404; }
+        .status-queued { background: #cce5ff; color: #0066cc; }
+        .status-extracting { background: #e1f5fe; color: #0277bd; }
+        .status-downloading { background: #e3f2fd; color: #1976d2; }
+        .status-merging { background: #f3e5f5; color: #7b1fa2; }
+        .status-completed { background: #e8f5e8; color: #2e7d32; }
+        .status-failed { background: #ffebee; color: #d32f2f; }
+
+        .multi-p-badge {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 10px;
             font-weight: 600;
         }
 
-        .status-running { background: #e3f2fd; color: #1976d2; }
-        .status-completed { background: #e8f5e8; color: #2e7d32; }
-        .status-failed { background: #ffebee; color: #d32f2f; }
+        .speed-indicator {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .eta-indicator {
+            color: #6c757d;
+            font-style: italic;
+        }
+
+        .progress-percentage {
+            color: #333;
+            font-weight: 700;
+        }
 
         .alert {
             padding: 15px;
@@ -1285,40 +1398,104 @@
 
         function updateTaskList(tasks) {
             const taskList = document.getElementById('taskList');
-            taskList.innerHTML = '';
 
-            Object.entries(tasks).forEach(([taskId, task]) => {
-                const item = document.createElement('div');
-                item.className = 'task-item';
+            // 获取当前任务ID列表
+            const currentTaskIds = new Set(Object.keys(tasks));
+            const existingTaskIds = new Set(Array.from(taskList.children).map(item => item.getAttribute('data-task-id')));
+
+            // 移除不存在的任务
+            existingTaskIds.forEach(taskId => {
+                if (!currentTaskIds.has(taskId)) {
+                    const item = taskList.querySelector(`[data-task-id="${taskId}"]`);
+                    if (item) item.remove();
+                }
+            });
+
+            // 按状态排序任务：下载中 > 合并中 > 分析中 > 排队中 > 等待中 > 已完成 > 失败
+            const sortedTasks = Object.entries(tasks).sort(([, a], [, b]) => {
+                const statusPriority = {
+                    'downloading': 1,
+                    'merging': 2,
+                    'extracting': 3,
+                    'queued': 4,
+                    'pending': 5,
+                    'completed': 6,
+                    'failed': 7
+                };
+                return (statusPriority[a.status] || 5) - (statusPriority[b.status] || 5);
+            });
+
+            sortedTasks.forEach(([taskId, task]) => {
+                let item = taskList.querySelector(`[data-task-id="${taskId}"]`);
 
                 const statusClass = getStatusClass(task.status);
                 const statusText = getStatusText(task.status);
+                const statusIcon = getStatusIcon(task.status);
 
                 // 格式化多P信息
-                let multiPInfo = '';
+                let multiPBadge = '';
                 if (task.is_multi_p && task.current_part) {
                     const currentPart = task.current_part.index;
                     const totalParts = task.total_pages;
-                    multiPInfo = `<br><small style="color: #007bff;">📺 分P: ${currentPart}/${totalParts}</small>`;
+                    multiPBadge = `<span class="multi-p-badge">📺 ${currentPart}/${totalParts}P</span>`;
                 } else if (task.is_multi_p) {
-                    multiPInfo = `<br><small style="color: #007bff;">📺 多P视频 (${task.total_pages}P)</small>`;
+                    multiPBadge = `<span class="multi-p-badge">📺 ${task.total_pages}P</span>`;
                 }
 
+                // 计算预计剩余时间
+                let etaText = '';
+                if (task.progress_percentage > 0 && task.download_speed > 0 && task.status === 'downloading') {
+                    const remainingPercent = 100 - task.progress_percentage;
+                    const etaSeconds = (remainingPercent / task.progress_percentage) * (task.progress_percentage / task.download_speed) * 8; // 粗略估算
+                    if (etaSeconds < 3600) {
+                        etaText = `<span class="eta-indicator">~${Math.round(etaSeconds / 60)}分钟</span>`;
+                    } else {
+                        etaText = `<span class="eta-indicator">~${Math.round(etaSeconds / 3600)}小时</span>`;
+                    }
+                }
+
+                if (!item) {
+                    // 创建新任务项
+                    item = document.createElement('div');
+                    item.className = 'task-item';
+                    item.setAttribute('data-task-id', taskId);
+                }
+
+                // 移除现有项（如果存在）以重新排序
+                if (item.parentNode) {
+                    item.remove();
+                }
+
+                // 按排序顺序插入
+                taskList.appendChild(item);
+
+                // 更新任务内容
                 item.innerHTML = `
-                    <div>
-                        <strong>${task.title}</strong>
-                        <br>
-                        <small>${taskId}</small>
-                        ${multiPInfo}
+                    <div class="task-header">
+                        <div class="task-info">
+                            <div class="task-title">${task.title}</div>
+                            <div class="task-meta">
+                                <span class="task-id">${taskId}</span>
+                                ${multiPBadge}
+                                <span class="task-status ${statusClass}">
+                                    ${statusIcon} ${statusText}
+                                </span>
+                            </div>
+                        </div>
                     </div>
-                    <div>
-                        <span class="task-status ${statusClass}">${statusText}</span>
-                        <br>
-                        <small>${task.progress_percentage.toFixed(1)}% | ${task.download_speed.toFixed(1)} MB/s</small>
+                    <div class="task-progress-container">
+                        <div class="task-progress-bar">
+                            <div class="task-progress-fill" style="width: ${task.progress_percentage}%"></div>
+                        </div>
+                        <div class="task-progress-info">
+                            <div class="task-stats">
+                                <span class="progress-percentage">${task.progress_percentage.toFixed(1)}%</span>
+                                <span class="speed-indicator">⚡ ${task.download_speed.toFixed(1)} MB/s</span>
+                                ${etaText}
+                            </div>
+                        </div>
                     </div>
                 `;
-
-                taskList.appendChild(item);
             });
         }
 
@@ -1332,15 +1509,15 @@
 
         function getStatusClass(status) {
             const statusClassMap = {
-                'pending': 'status-running',
-                'queued': 'status-running',
-                'extracting': 'status-running',
-                'downloading': 'status-running',
-                'merging': 'status-running',
+                'pending': 'status-pending',
+                'queued': 'status-queued',
+                'extracting': 'status-extracting',
+                'downloading': 'status-downloading',
+                'merging': 'status-merging',
                 'completed': 'status-completed',
                 'failed': 'status-failed'
             };
-            return statusClassMap[status] || 'status-running';
+            return statusClassMap[status] || 'status-pending';
         }
 
         function getStatusText(status) {
@@ -1354,6 +1531,19 @@
                 'failed': '失败'
             };
             return statusTextMap[status] || status;
+        }
+
+        function getStatusIcon(status) {
+            const statusIconMap = {
+                'pending': '⏳',
+                'queued': '📋',
+                'extracting': '🔍',
+                'downloading': '📥',
+                'merging': '🔧',
+                'completed': '✅',
+                'failed': '❌'
+            };
+            return statusIconMap[status] || '⏳';
         }
 
         // 验证SESSDATA
