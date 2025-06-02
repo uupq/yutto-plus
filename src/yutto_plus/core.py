@@ -27,6 +27,41 @@ def expand_user_path(path_str: str) -> Path:
     return Path(path_str)
 
 
+def parse_up_space_url(url: str) -> Optional[int]:
+    """
+    从UP主空间URL中提取UID
+
+    支持的URL格式：
+    - https://space.bilibili.com/UID
+    - https://space.bilibili.com/UID/upload/video
+    - https://space.bilibili.com/UID?spm_id_from=...
+
+    Args:
+        url: UP主空间URL
+
+    Returns:
+        Optional[int]: 提取到的UID，如果解析失败返回None
+
+    Examples:
+        parse_up_space_url("https://space.bilibili.com/1108252038/upload/video") -> 1108252038
+        parse_up_space_url("https://space.bilibili.com/3546900437404310?spm_id_from=333.1387") -> 3546900437404310
+    """
+    import re
+
+    # 匹配space.bilibili.com/UID格式
+    pattern = r'https?://space\.bilibili\.com/(\d+)'
+    match = re.search(pattern, url)
+
+    if match:
+        try:
+            uid = int(match.group(1))
+            return uid
+        except ValueError:
+            return None
+
+    return None
+
+
 def parse_episodes_selection(episodes_str: str, total_episodes: int) -> List[int]:
     """解析分P选择字符串，返回要下载的分P索引列表（从0开始）
 
@@ -630,24 +665,63 @@ class BilibiliAPIClient:
         if self.session:
             await self.session.aclose()
     
-    async def get_user_info(self):
-        """获取用户信息，包括登录状态和会员状态"""
-        info_api = "https://api.bilibili.com/x/web-interface/nav"
-        response = await self.session.get(info_api)
-        data = response.json()
-        
-        if data["code"] != 0:
-            # 如果获取失败，返回默认值
+    async def get_user_info(self, uid: Optional[int] = None):
+        """获取用户信息，包括登录状态和会员状态
+
+        Args:
+            uid: 可选，指定用户UID。如果不提供则获取当前登录用户信息
+        """
+        if uid is not None:
+            # 获取指定用户的信息
+            info_api = f"https://api.bilibili.com/x/space/acc/info"
+            params = {'mid': uid}
+            response = await self.session.get(info_api, params=params)
+            data = response.json()
+
+            if data.get('code') == 0:
+                user_data = data.get('data', {})
+                name = user_data.get('name', '')
+
+                # 检查是否真的获取到了用户名
+                if name and name.strip():
+                    return {
+                        'is_login': False,  # 这是其他用户的信息
+                        'name': name,
+                        'username': name,
+                        'uid': user_data.get('mid', uid),
+                        'vip_status': user_data.get('vip', {}).get('status', 0) == 1,
+                        'vip_type': user_data.get('vip', {}).get('type', 0),
+                        'level': user_data.get('level', 0),
+                        'face': user_data.get('face', ''),
+                        'sign': user_data.get('sign', '')
+                    }
+                else:
+                    # API成功但没有返回用户名，抛出异常以触发重试
+                    raise Exception(f"API返回空用户名，用户可能不存在或被封禁")
+            else:
+                # API请求失败，抛出异常以触发重试
+                raise Exception(f"API请求失败 (code: {data.get('code')}): {data.get('message', '未知错误')}")
+        else:
+            # 获取当前登录用户信息
+            info_api = "https://api.bilibili.com/x/web-interface/nav"
+            response = await self.session.get(info_api)
+            data = response.json()
+
+            if data["code"] != 0:
+                # 如果获取失败，返回默认值
+                return {
+                    "vip_status": False,
+                    "is_login": False
+                }
+
+            res_json_data = data.get("data", {})
             return {
-                "vip_status": False,
-                "is_login": False
+                "vip_status": res_json_data.get("vipStatus") == 1,  # API 返回的是 int，如果未登录就没这个值
+                "is_login": res_json_data.get("isLogin", False),  # API 返回的是 bool
+                "name": res_json_data.get("uname", ""),
+                "username": res_json_data.get("uname", ""),
+                "uid": res_json_data.get("mid", 0)
             }
-        
-        res_json_data = data.get("data", {})
-        return {
-            "vip_status": res_json_data.get("vipStatus") == 1,  # API 返回的是 int，如果未登录就没这个值
-            "is_login": res_json_data.get("isLogin", False),  # API 返回的是 bool
-        }
     
     def extract_bv_info(self, url: str) -> Dict[str, Any]:
         """从 URL 中提取视频标识"""
@@ -831,6 +905,425 @@ class BilibiliAPIClient:
         """获取编码名称"""
         codec_map = {7: "avc", 12: "hevc", 13: "av1"}
         return codec_map.get(codecid, f"unknown_{codecid}")
+
+
+class UploaderVideoManager:
+    """UP主投稿视频管理器"""
+
+    def __init__(self, uid: int, output_dir: Path, sessdata: str = ""):
+        self.uid = uid
+        # 确保正确展开用户目录路径
+        if isinstance(output_dir, str):
+            output_dir = output_dir.expanduser() if hasattr(output_dir, 'expanduser') else Path(output_dir).expanduser()
+        else:
+            output_dir = output_dir.expanduser()
+        self.output_dir = Path(output_dir)
+        self.sessdata = sessdata
+        self.csv_path = None
+        self.username = None
+
+    async def get_uploader_name(self) -> str:
+        """获取UP主用户名，带重试机制"""
+        if self.username:
+            return self.username
+
+        max_retries = 30
+        retry_delay = 3
+
+        for attempt in range(max_retries):
+            try:
+                async with BilibiliAPIClient(sessdata=self.sessdata) as client:
+                    user_info = await client.get_user_info(uid=self.uid)
+                    name = user_info.get('name', '')
+
+                    if name and name.strip():
+                        # 成功获取到真实用户名
+                        self.username = name
+                        return self.username
+                    else:
+                        # API返回了空名称，需要重试
+                        raise Exception("API返回空用户名")
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): {e}")
+                    print(f"🔄 {retry_delay}秒后重试...")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"❌ 重试{max_retries}次后仍无法获取UP主用户名: {e}")
+                    print(f"🔄 使用默认用户名: 用户_{self.uid}")
+                    self.username = f'用户_{self.uid}'
+                    return self.username
+
+        # 这行代码理论上不会执行到，但为了安全起见
+        self.username = f'用户_{self.uid}'
+        return self.username
+
+    async def get_uploader_videos(self, update_check: bool = False) -> List[Dict]:
+        """
+        获取UP主的所有投稿视频列表
+
+        Args:
+            update_check: 是否检查更新
+
+        Returns:
+            List[Dict]: 视频信息列表
+        """
+        # 确保输出目录存在
+        username = await self.get_uploader_name()
+        safe_username = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', username)[:50]
+        user_dir = self.output_dir / f"{self.uid}-{safe_username}"
+        user_dir.mkdir(parents=True, exist_ok=True)
+
+        self.csv_path = user_dir / "video_urls.csv"
+
+        # 如果CSV存在且不需要更新检查，直接读取
+        if self.csv_path.exists() and not update_check:
+            return await self._load_videos_from_csv()
+
+        # 从API获取视频列表
+        print(f"🔍 正在获取UP主 {username} (UID: {self.uid}) 的投稿视频...")
+        videos = await self._fetch_videos_from_api()
+
+        # 如果CSV存在，合并新旧数据
+        if self.csv_path.exists():
+            existing_videos = await self._load_videos_from_csv()
+            videos = await self._merge_video_lists(existing_videos, videos)
+
+        # 保存到CSV
+        await self._save_videos_to_csv(videos)
+
+        return videos
+
+    async def _fetch_videos_from_api(self) -> List[Dict]:
+        """从B站API获取UP主的所有投稿视频，带重试机制"""
+        videos = []
+        page = 1
+        max_retries = 30
+        retry_delay = 3  # 3秒重试间隔
+
+        try:
+            async with BilibiliAPIClient(sessdata=self.sessdata) as client:
+                while True:
+                    success = False
+
+                    # 重试机制
+                    for attempt in range(max_retries):
+                        try:
+                            # 使用更简单的API获取UP主投稿视频
+                            api_url = f"https://api.bilibili.com/x/space/arc/search"
+                            params = {
+                                'mid': self.uid,
+                                'pn': page,
+                                'ps': 30,  # 每页30个视频
+                                'order': 'pubdate',  # 按发布时间排序
+                                'tid': 0,  # 所有分区
+                                'keyword': '',
+                                'jsonp': 'jsonp'
+                            }
+
+                            response = await client.session.get(api_url, params=params)
+                            data = response.json()
+
+                            if data.get('code') == 0:
+                                # 成功获取数据
+                                success = True
+                                break
+                            elif data.get('code') == -799:
+                                # 频率限制，需要重试
+                                if attempt < max_retries - 1:
+                                    print(f"⚠️ 请求频率限制 (第{attempt + 1}/{max_retries}次尝试)，{retry_delay}秒后重试...")
+                                    await asyncio.sleep(retry_delay)
+                                    continue
+                                else:
+                                    print(f"❌ 重试{max_retries}次后仍然失败: {data.get('message', '未知错误')}")
+                                    return videos
+                            else:
+                                # 其他错误
+                                print(f"⚠️ API请求失败 (code: {data.get('code')}): {data.get('message', '未知错误')}")
+                                if attempt < max_retries - 1:
+                                    print(f"🔄 {retry_delay}秒后重试 (第{attempt + 1}/{max_retries}次尝试)...")
+                                    await asyncio.sleep(retry_delay)
+                                    continue
+                                else:
+                                    # 尝试备用API
+                                    if page == 1:
+                                        print("🔄 尝试使用备用API...")
+                                        backup_videos = await self._fetch_videos_backup_api()
+                                        return backup_videos
+                                    return videos
+
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                print(f"⚠️ 网络错误 (第{attempt + 1}/{max_retries}次尝试): {e}")
+                                print(f"🔄 {retry_delay}秒后重试...")
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            else:
+                                print(f"❌ 网络请求失败: {e}")
+                                return videos
+
+                    if not success:
+                        break
+
+                    # 解析响应数据
+                    result_data = data.get('data', {})
+                    if 'list' in result_data:
+                        vlist = result_data['list'].get('vlist', [])
+                    else:
+                        vlist = result_data.get('vlist', [])
+
+                    if not vlist:
+                        break
+
+                    # 处理这一页的视频
+                    for video in vlist:
+                        video_info = {
+                            'url': f"https://www.bilibili.com/video/{video['bvid']}",
+                            'bvid': video['bvid'],
+                            'title': video.get('title', ''),
+                            'duration': self._format_duration(video.get('length', '')),
+                            'pubdate': video.get('created', 0),
+                            'downloaded': 'False',
+                            'file_path': '',
+                            'error_info': ''
+                        }
+                        videos.append(video_info)
+
+                    print(f"📄 已获取第{page}页，共{len(vlist)}个视频")
+
+                    # 如果这一页不满30个，说明已经是最后一页
+                    if len(vlist) < 30:
+                        break
+
+                    page += 1
+                    await asyncio.sleep(1)  # 页面间延迟
+
+        except Exception as e:
+            print(f"❌ 获取UP主视频列表失败: {e}")
+
+        print(f"✅ 获取到 {len(videos)} 个投稿视频")
+        return videos
+
+    async def _fetch_videos_backup_api(self) -> List[Dict]:
+        """备用API获取UP主投稿视频，带重试机制"""
+        videos = []
+        page = 1
+        max_retries = 30
+        retry_delay = 3
+
+        try:
+            async with BilibiliAPIClient(sessdata=self.sessdata) as client:
+                while True:
+                    success = False
+
+                    # 重试机制
+                    for attempt in range(max_retries):
+                        try:
+                            # 使用更基础的API
+                            api_url = f"https://api.bilibili.com/x/space/arc/search"
+                            params = {
+                                'mid': self.uid,
+                                'pn': page,
+                                'ps': 25,  # 减少每页数量
+                                'order': 'pubdate'
+                            }
+
+                            response = await client.session.get(api_url, params=params)
+                            data = response.json()
+
+                            if data.get('code') == 0:
+                                success = True
+                                break
+                            elif data.get('code') == -799:
+                                if attempt < max_retries - 1:
+                                    print(f"⚠️ 备用API频率限制 (第{attempt + 1}/{max_retries}次尝试)，{retry_delay}秒后重试...")
+                                    await asyncio.sleep(retry_delay)
+                                    continue
+                                else:
+                                    print(f"❌ 备用API重试{max_retries}次后仍然失败")
+                                    return videos
+                            else:
+                                if attempt < max_retries - 1:
+                                    print(f"⚠️ 备用API错误 (第{attempt + 1}/{max_retries}次尝试): {data.get('message', '未知错误')}")
+                                    print(f"🔄 {retry_delay}秒后重试...")
+                                    await asyncio.sleep(retry_delay)
+                                    continue
+                                else:
+                                    print(f"❌ 备用API最终失败: {data.get('message', '未知错误')}")
+                                    return videos
+
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                print(f"⚠️ 备用API网络错误 (第{attempt + 1}/{max_retries}次尝试): {e}")
+                                print(f"🔄 {retry_delay}秒后重试...")
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            else:
+                                print(f"❌ 备用API网络请求失败: {e}")
+                                return videos
+
+                    if not success:
+                        break
+
+                    # 解析数据
+                    result_data = data.get('data', {})
+                    vlist = []
+
+                    # 尝试不同的数据结构
+                    if 'list' in result_data and 'vlist' in result_data['list']:
+                        vlist = result_data['list']['vlist']
+                    elif 'vlist' in result_data:
+                        vlist = result_data['vlist']
+
+                    if not vlist:
+                        break
+
+                    # 处理视频数据
+                    for video in vlist:
+                        video_info = {
+                            'url': f"https://www.bilibili.com/video/{video['bvid']}",
+                            'bvid': video['bvid'],
+                            'title': video.get('title', ''),
+                            'duration': self._format_duration(video.get('length', '')),
+                            'pubdate': video.get('created', 0),
+                            'downloaded': 'False',
+                            'file_path': '',
+                            'error_info': ''
+                        }
+                        videos.append(video_info)
+
+                    print(f"📄 备用API已获取第{page}页，共{len(vlist)}个视频")
+
+                    if len(vlist) < 25:
+                        break
+
+                    page += 1
+                    await asyncio.sleep(2)  # 更长的延迟
+
+        except Exception as e:
+            print(f"❌ 备用API异常: {e}")
+
+        return videos
+
+    def _format_duration(self, length_str: str) -> str:
+        """格式化视频时长"""
+        if not length_str:
+            return "0s"
+
+        # length_str 格式通常是 "mm:ss" 或 "hh:mm:ss"
+        parts = length_str.split(':')
+        try:
+            if len(parts) == 2:  # mm:ss
+                minutes, seconds = map(int, parts)
+                total_seconds = minutes * 60 + seconds
+            elif len(parts) == 3:  # hh:mm:ss
+                hours, minutes, seconds = map(int, parts)
+                total_seconds = hours * 3600 + minutes * 60 + seconds
+            else:
+                return length_str
+
+            # 转换为友好格式
+            if total_seconds >= 3600:
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                return f"{hours}h{minutes}m{seconds}s"
+            elif total_seconds >= 60:
+                minutes = total_seconds // 60
+                seconds = total_seconds % 60
+                return f"{minutes}m{seconds}s"
+            else:
+                return f"{total_seconds}s"
+
+        except ValueError:
+            return length_str
+
+    async def _load_videos_from_csv(self) -> List[Dict]:
+        """从CSV文件加载视频列表"""
+        videos = []
+
+        try:
+            import csv
+            with open(self.csv_path, 'r', encoding='utf-8', newline='') as f:
+                # 跳过注释行
+                lines = [line for line in f if not line.startswith('#')]
+                if not lines:
+                    return []
+
+                # 重新构建CSV内容
+                csv_content = ''.join(lines)
+                import io
+                csv_file = io.StringIO(csv_content)
+
+                reader = csv.DictReader(csv_file)
+                for row in reader:
+                    videos.append(dict(row))
+
+        except Exception as e:
+            print(f"⚠️ 读取CSV文件失败: {e}")
+
+        return videos
+
+    async def _merge_video_lists(self, existing_videos: List[Dict], new_videos: List[Dict]) -> List[Dict]:
+        """合并现有视频列表和新获取的视频列表"""
+        # 创建现有视频的URL集合
+        existing_urls = {video['url'] for video in existing_videos}
+
+        # 添加新视频到列表开头
+        merged_videos = []
+        new_count = 0
+
+        for video in new_videos:
+            if video['url'] not in existing_urls:
+                merged_videos.append(video)
+                new_count += 1
+
+        # 添加现有视频
+        merged_videos.extend(existing_videos)
+
+        if new_count > 0:
+            print(f"🆕 发现 {new_count} 个新视频")
+        else:
+            print("📋 没有发现新视频")
+
+        return merged_videos
+
+    async def _save_videos_to_csv(self, videos: List[Dict]):
+        """保存视频列表到CSV文件"""
+        if not videos:
+            return
+
+        try:
+            import csv
+            from datetime import datetime
+
+            fieldnames = ['url', 'bvid', 'title', 'duration', 'pubdate', 'downloaded', 'file_path', 'error_info']
+
+            with open(self.csv_path, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+
+                for video in videos:
+                    # 确保所有字段都存在
+                    row = {field: video.get(field, '') for field in fieldnames}
+                    writer.writerow(row)
+
+                # 添加保存时间戳
+                f.write(f"\n# SaveTime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+            print(f"💾 视频列表已保存到: {self.csv_path}")
+
+        except Exception as e:
+            print(f"❌ 保存CSV文件失败: {e}")
+
+    async def get_user_directory(self) -> Path:
+        """获取用户专用目录"""
+        # 确保获取到真实用户名
+        username = await self.get_uploader_name()
+        safe_username = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', username)[:50]
+        return self.output_dir / f"{self.uid}-{safe_username}"
 
 
 class DownloadTask:

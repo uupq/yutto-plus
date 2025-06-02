@@ -434,6 +434,25 @@ Web界面功能:
         help='多P视频不创建文件夹，直接保存到输出目录'
     )
 
+    # UP主投稿视频下载参数
+    parser.add_argument(
+        '--uploader',
+        type=str,
+        help='UP主空间URL或UID，下载该UP主的所有投稿视频 (例如: https://space.bilibili.com/123456 或 123456)'
+    )
+
+    parser.add_argument(
+        '--update-uploader',
+        action='store_true',
+        help='更新已存在的UP主视频列表，检查新投稿'
+    )
+
+    parser.add_argument(
+        '--list-only',
+        action='store_true',
+        help='仅获取并显示UP主视频列表，不进行下载'
+    )
+
     return parser.parse_args()
 
 
@@ -477,6 +496,11 @@ def main():
             print(f"\n💡 创建配置文件: python yutto-plus.py --create-config [模板名称]")
             return
         
+        # 处理UP主投稿视频下载
+        if args.uploader:
+            handle_uploader_download(args, config_manager)
+            return
+
         # 验证URL（非WebUI模式下必需）
         if not args.urls:
             print("❌ 错误: 请提供有效的B站视频链接")
@@ -1118,5 +1142,184 @@ def start_webui(args):
         sys.exit(1)
 
 
+def handle_uploader_download(args, config_manager):
+    """处理UP主投稿视频下载"""
+    import asyncio
+    from yutto_plus.core import parse_up_space_url, UploaderVideoManager
+
+    # 解析UP主UID
+    uid = None
+    if args.uploader.isdigit():
+        # 直接是UID
+        uid = int(args.uploader)
+    else:
+        # 尝试从URL解析UID
+        uid = parse_up_space_url(args.uploader)
+        if uid is None:
+            print(f"❌ 错误: 无法从URL解析UP主UID: {args.uploader}")
+            print("💡 支持的格式: https://space.bilibili.com/UID 或直接输入UID")
+            sys.exit(1)
+
+    # 加载配置文件（如果指定）
+    config = {}
+    if args.config:
+        try:
+            config = config_manager.load_config(args.config)
+            if not config_manager.validate_config(config):
+                print("❌ 配置文件验证失败")
+                sys.exit(1)
+            print(f"✅ 已加载配置文件: {args.config}")
+        except Exception as e:
+            print(f"❌ 配置文件错误: {e}")
+            sys.exit(1)
+
+    # 命令行参数覆盖配置文件参数
+    args = merge_config_with_args(config, args)
+
+    # 输出横幅
+    if not args.quiet:
+        print("🚀 yutto-plus - UP主投稿视频批量下载")
+        print("=" * 50)
+        if config:
+            description = config.get('description', '')
+            if description:
+                print(f"📝 配置: {description}")
+        print(f"👤 UP主UID: {uid}")
+        print(f"📁 输出目录: {args.output}")
+
+    # 运行异步下载
+    asyncio.run(download_uploader_videos(uid, args))
+
+
+async def download_uploader_videos(uid: int, args):
+    """异步下载UP主的所有投稿视频"""
+    from yutto_plus.core import UploaderVideoManager
+
+    # 创建UP主视频管理器
+    # 确保输出目录路径正确展开
+    output_dir = Path(args.output).expanduser()
+    manager = UploaderVideoManager(
+        uid=uid,
+        output_dir=output_dir,
+        sessdata=args.sessdata or ""
+    )
+
+    try:
+        # 获取视频列表
+        update_check = args.update_uploader
+        videos = await manager.get_uploader_videos(update_check=update_check)
+
+        if not videos:
+            print("📋 没有找到投稿视频")
+            return
+
+        # 显示视频列表统计
+        total_videos = len(videos)
+        downloaded_count = sum(1 for v in videos if v.get('downloaded', '').lower() == 'true')
+        pending_count = total_videos - downloaded_count
+
+        if not args.quiet:
+            print(f"\n📊 视频统计:")
+            print(f"   📺 总视频数: {total_videos}")
+            print(f"   ✅ 已下载: {downloaded_count}")
+            print(f"   ⏳ 待下载: {pending_count}")
+
+        # 如果只是列表模式，显示视频列表并退出
+        if args.list_only:
+            print(f"\n📋 UP主投稿视频列表:")
+            print("-" * 80)
+            for i, video in enumerate(videos[:20], 1):  # 只显示前20个
+                status = "✅" if video.get('downloaded', '').lower() == 'true' else "⏳"
+                print(f"{i:3d}. {status} {video.get('title', '未知标题')[:60]}")
+                print(f"     🔗 {video.get('url', '')}")
+                print(f"     ⏱️ {video.get('duration', '未知时长')}")
+                print()
+
+            if total_videos > 20:
+                print(f"... 还有 {total_videos - 20} 个视频（完整列表请查看CSV文件）")
+
+            print(f"💾 完整列表已保存到: {manager.csv_path}")
+            return
+
+        # 过滤出需要下载的视频
+        videos_to_download = [v for v in videos if v.get('downloaded', '').lower() != 'true']
+
+        if not videos_to_download:
+            print("🎉 所有视频都已下载完成！")
+            return
+
+        if not args.quiet:
+            print(f"\n🚀 开始下载 {len(videos_to_download)} 个视频...")
+
+        # 使用并行下载模式
+        urls = [video['url'] for video in videos_to_download]
+
+        # 创建临时args对象用于并行下载
+        download_args = type('Args', (), {})()
+        for attr in dir(args):
+            if not attr.startswith('_'):
+                setattr(download_args, attr, getattr(args, attr))
+
+        download_args.urls = urls
+        download_args.parsed_urls = [(url, None) for url in urls]  # 没有URL级别的分P参数
+
+        # 设置输出目录为UP主专用目录
+        user_dir = await manager.get_user_directory()
+        download_args.output = str(user_dir)
+
+        if not args.quiet:
+            print(f"📁 视频将保存到: {user_dir}")
+
+        # 执行并行下载（在新的事件循环中运行）
+        import asyncio
+        import threading
+
+        def run_download():
+            # 在新线程中运行同步下载
+            parallel_download_mode(download_args)
+
+        # 启动下载线程
+        download_thread = threading.Thread(target=run_download, daemon=False)
+        download_thread.start()
+
+        # 等待下载完成
+        download_thread.join()
+
+        # 更新CSV文件中的下载状态
+        await update_download_status(manager, videos_to_download)
+
+    except Exception as e:
+        print(f"❌ 下载过程中发生错误: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+async def update_download_status(manager: 'UploaderVideoManager', downloaded_videos: list):
+    """更新CSV文件中的下载状态"""
+    try:
+        # 重新加载CSV文件
+        all_videos = await manager._load_videos_from_csv()
+
+        # 创建URL到视频的映射
+        url_to_video = {v['url']: v for v in all_videos}
+
+        # 更新下载状态
+        for video in downloaded_videos:
+            url = video['url']
+            if url in url_to_video:
+                url_to_video[url]['downloaded'] = 'True'
+                # 这里可以添加更多状态更新逻辑
+
+        # 保存更新后的CSV
+        await manager._save_videos_to_csv(list(url_to_video.values()))
+
+        print(f"💾 已更新下载状态到: {manager.csv_path}")
+
+    except Exception as e:
+        print(f"⚠️ 更新下载状态失败: {e}")
+
+
 if __name__ == "__main__":
-    main() 
+    main()
