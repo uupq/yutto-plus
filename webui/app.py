@@ -49,7 +49,6 @@ def save_task_info(session_id: str, task_id: str, source: str, task_info: dict):
         'status': 'active',
         'session_id': session_id
     }
-    print(f"💾 保存任务信息: {task_id} (来源: {source})")
 
 def get_active_tasks_by_source(source: str):
     """获取指定来源的所有活跃任务"""
@@ -64,7 +63,6 @@ def mark_task_completed(task_id: str):
     """标记任务为已完成"""
     if task_id in persistent_tasks:
         persistent_tasks[task_id]['status'] = 'completed'
-        print(f"✅ 标记任务完成: {task_id}")
 
 def cleanup_completed_tasks():
     """清理已完成的任务"""
@@ -72,8 +70,6 @@ def cleanup_completed_tasks():
                       if task_data['status'] == 'completed']
     for task_id in completed_tasks:
         del persistent_tasks[task_id]
-    if completed_tasks:
-        print(f"🗑️ 清理已完成任务: {len(completed_tasks)} 个")
 
 def parse_url_with_parts(url_string: str):
     """
@@ -230,17 +226,11 @@ def init_downloader(session_id, config=None):
 
     # 如果全局下载器已存在且配置相同，直接复用
     if global_downloader is not None and global_config == config:
-        print(f'🔄 复用现有下载器实例 (会话: {session_id})')
         active_downloads[session_id] = {
             'downloader': global_downloader,
             'tasks': {},
             'config': config
         }
-
-        # 确保WebUI回调已设置
-        if not hasattr(global_downloader, '_webui_callback_set'):
-            print(f"⚠️ 复用的下载器缺少WebUI回调，需要重新设置")
-
         return global_downloader
 
     # 创建新的下载器实例
@@ -265,9 +255,6 @@ def init_downloader(session_id, config=None):
         'tasks': {},
         'config': config
     }
-
-    print(f'🚀 YuttoPlus 已初始化 (会话: {session_id}, 并发数: {config.get("concurrent", 2)})')
-    print(f'📁 输出目录: {config.get("output_dir", "./Downloads")}')
 
     return downloader_instance
 
@@ -668,8 +655,6 @@ def handle_parallel_download_request(data):
                     overall_progress = downloader_instance.get_overall_progress()
                     tasks_progress = downloader_instance.tasks_progress
 
-                    print(f"📊 发送进度更新: 总任务={overall_progress.total_tasks}, 运行中={overall_progress.running_tasks}, 进度={overall_progress.overall_progress:.1f}%")
-
                     # 发送整体进度到所有连接的客户端
                     socketio.emit('parallel_progress', {
                         'source': source,  # 传递来源标识
@@ -702,7 +687,6 @@ def handle_parallel_download_request(data):
             # 替换方法
             downloader_instance._update_progress_display = enhanced_update_progress
             downloader_instance._webui_callback_set = True  # 标记已设置
-            print(f"✅ 已设置WebUI进度回调")
         
         # 添加任务到下载器
         task_ids = downloader_instance.add_download_tasks(tasks)
@@ -720,12 +704,8 @@ def handle_parallel_download_request(data):
                     'created_at': time.time()
                 }
                 save_task_info(session_id, task_id, source, task_info)
-                print(f"💾 已保存任务信息: {task_id} -> {url}")
         except Exception as save_error:
             print(f"⚠️ 保存任务信息时出错: {save_error}")
-            print(f"🔍 调试信息: tasks类型={type(tasks)}, 长度={len(tasks)}")
-            if tasks:
-                print(f"🔍 第一个任务: {tasks[0]}")
             # 继续执行，不中断下载
 
         # 设置回调
@@ -842,8 +822,6 @@ def handle_check_active_tasks(data):
                     }
 
             if running_tasks:
-                print(f"✅ 找到 {len(running_tasks)} 个运行中的 {source} 任务")
-
                 # 发送任务信息和当前进度
                 emit('active_tasks_result', {
                     'source': source,
@@ -906,7 +884,6 @@ def handle_check_active_tasks(data):
 
                 # 在后台线程中启动定期更新
                 threading.Thread(target=send_periodic_updates, daemon=True).start()
-                print(f"🔄 已启动定期进度更新线程")
             else:
                 print(f"ℹ️ {source} 任务已完成或不再运行")
                 # 标记任务为已完成
