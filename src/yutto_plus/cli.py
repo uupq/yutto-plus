@@ -453,6 +453,12 @@ Web界面功能:
         help='仅获取并显示UP主视频列表，不进行下载'
     )
 
+    parser.add_argument(
+        '--delete-uploader',
+        type=str,
+        help='删除指定目录下所有UP主文件夹中的视频文件（保留CSV记录）'
+    )
+
     return parser.parse_args()
 
 
@@ -499,6 +505,11 @@ def main():
         # 处理UP主投稿视频下载
         if args.uploader:
             handle_uploader_download(args, config_manager)
+            return
+
+        # 处理UP主文件删除
+        if args.delete_uploader:
+            handle_uploader_delete(args, config_manager)
             return
 
         # 验证URL（非WebUI模式下必需）
@@ -1319,6 +1330,133 @@ async def update_download_status(manager: 'UploaderVideoManager', downloaded_vid
 
     except Exception as e:
         print(f"⚠️ 更新下载状态失败: {e}")
+
+
+def handle_uploader_delete(args, config_manager):
+    """处理UP主文件删除"""
+    import os
+    import re
+    import shutil
+    from pathlib import Path
+
+    # 获取删除目录
+    delete_path = args.delete_uploader
+    if not delete_path:
+        print("❌ 错误: 请指定要删除的目录路径")
+        sys.exit(1)
+
+    # 展开路径
+    abs_path = Path(delete_path).expanduser().resolve()
+
+    if not abs_path.exists() or not abs_path.is_dir():
+        print(f"❌ 错误: 删除路径 '{abs_path}' 不存在或不是目录")
+        sys.exit(1)
+
+    print(f"🔍 扫描目录以查找UP主文件夹: {abs_path}")
+
+    # 查找符合条件的文件夹
+    folders_to_process = []
+    for item in abs_path.iterdir():
+        if item.is_dir():
+            # 检查是否符合 UID-用户名 格式
+            if re.match(r'^\d+-.*$', item.name):
+                csv_file = item / "video_urls.csv"
+                if csv_file.exists():
+                    folders_to_process.append(item)
+
+    if not folders_to_process:
+        print("📋 没有找到符合条件的UP主文件夹（格式：UID-用户名，且包含video_urls.csv）")
+        return
+
+    # 显示将要处理的文件夹
+    print(f"\n📁 找到 {len(folders_to_process)} 个UP主文件夹:")
+    for folder in folders_to_process:
+        print(f"  - {folder.name}")
+
+    print(f"\n⚠️ 警告: 这将删除 {len(folders_to_process)} 个文件夹中的所有文件和子文件夹")
+    print("📋 但会保留 video_urls.csv 文件")
+
+    # 第一次确认
+    response1 = input("\n是否继续？输入 'yes' 继续，其他任何内容取消: ")
+    if response1.lower() != 'yes':
+        print("❌ 删除操作已取消")
+        return
+
+    # 最终确认
+    print("\n🚨 最终警告 🚨")
+    print("此操作无法撤销！所有视频文件和子文件夹将被永久删除。")
+    response2 = input("您确定要继续吗？输入 'DELETE'（大写）确认: ")
+    if response2 != 'DELETE':
+        print("❌ 删除操作已取消")
+        return
+
+    # 开始删除
+    print("\n🗑️ 开始删除...")
+    deleted_items_count = 0
+    error_count = 0
+    folders_with_content = 0
+    folders_empty_except_csv = 0
+
+    for folder in folders_to_process:
+        print(f"\n📂 处理文件夹: {folder.name}")
+        try:
+            items = list(folder.iterdir())
+            print(f"   发现 {len(items)} 个项目")
+
+            # 统计除了CSV之外的项目
+            non_csv_items = [item for item in items if item.name.lower() != "video_urls.csv"]
+            if non_csv_items:
+                folders_with_content += 1
+                item_names = [item.name for item in non_csv_items[:5]]
+                if len(non_csv_items) > 5:
+                    item_names.append("...")
+                print(f"   要删除的项目 ({len(non_csv_items)}): {', '.join(item_names)}")
+            else:
+                folders_empty_except_csv += 1
+                print(f"   没有要删除的项目（只有video_urls.csv）")
+                continue
+
+            # 删除项目
+            for item in items:
+                if item.name.lower() == "video_urls.csv":
+                    continue
+
+                try:
+                    if item.is_file() or item.is_symlink():
+                        item.unlink()
+                        print(f"   - 已删除文件: {item.name}")
+                        deleted_items_count += 1
+                    elif item.is_dir():
+                        shutil.rmtree(item)
+                        print(f"   - 已删除文件夹: {item.name}")
+                        deleted_items_count += 1
+                    else:
+                        print(f"   - 跳过未知类型: {item.name}")
+
+                except FileNotFoundError:
+                    print(f"   - 跳过不存在的文件: {item.name}")
+                except PermissionError as e:
+                    print(f"   - 权限错误，无法删除 {item.name}: {e}")
+                    error_count += 1
+                except Exception as e:
+                    print(f"   - 删除 {item.name} 时出错: {e}")
+                    error_count += 1
+
+        except Exception as e:
+            print(f"   - 访问文件夹 {folder.name} 时出错: {e}")
+            error_count += 1
+
+    # 显示删除总结
+    print("\n📊 删除总结")
+    print("=" * 40)
+    print(f"处理的文件夹总数: {len(folders_to_process)}")
+    print(f"有内容需要删除的文件夹: {folders_with_content}")
+    print(f"只有video_urls.csv的文件夹: {folders_empty_except_csv}")
+    print(f"成功删除的项目数: {deleted_items_count}")
+    if error_count > 0:
+        print(f"遇到的错误数: {error_count}")
+    print("=" * 40)
+    print("🎉 删除操作完成！")
 
 
 if __name__ == "__main__":

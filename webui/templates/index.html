@@ -1099,7 +1099,25 @@
         // 监听分P确认结果
         socket.on('episodes_confirmations', function(data) {
             console.log('收到分P确认结果:', data);
-            handleEpisodesConfirmations(data.confirmations);
+            handleEpisodesConfirmations(data.confirmations, data.locked);
+        });
+
+        // 监听下载状态恢复
+        socket.on('restore_download_state', function(data) {
+            console.log('恢复下载状态:', data);
+            restoreDownloadState(data.source, data.data, data.confirmations, data.locked);
+        });
+
+        // 监听下载状态锁定
+        socket.on('download_state_locked', function(data) {
+            console.log('下载状态已锁定:', data);
+            lockDownloadInterface(data.source, data.data, data.confirmations);
+        });
+
+        // 监听下载状态解锁
+        socket.on('download_state_unlocked', function(data) {
+            console.log('下载状态已解锁:', data);
+            unlockDownloadInterface(data.source);
         });
 
         // 选项卡切换
@@ -1532,7 +1550,8 @@
 
         socket.on('parallel_download_complete', function(data) {
             const final = data.final_status;
-            
+            const source = data.source || 'parallel';
+
             if (final.failed > 0 && final.completed === 0) {
                 showAlert(`下载失败! 失败: ${final.failed}`, 'error');
             } else if (final.failed > 0) {
@@ -1540,13 +1559,47 @@
             } else {
                 showAlert(`下载完成! 成功下载 ${final.completed} 个视频`, 'success');
             }
-            
-            // 重置按钮状态
-            resetDownloadButtons();
-            
-            // 显示完成状态
-            updateParallelProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
+
+            // 根据来源解锁对应的界面
+            if (source === 'precise') {
+                updatePreciseProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
+            } else if (source === 'single') {
+                updateSingleProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
+            } else {
+                updateParallelProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
+            }
+
+            // 统一使用解锁函数（会自动清空和重置）
+            unlockDownloadInterface(source);
         });
+
+        // 解锁精准下载界面
+        function unlockPreciseDownloadInterface() {
+            // 恢复按钮状态
+            preciseDownloadBtn.disabled = false;
+            preciseDownloadBtn.textContent = '🚀 开始精准下载';
+
+            // 解锁所有配置选项
+            document.getElementById('preciseQuality').disabled = false;
+            document.getElementById('preciseAudioQuality').disabled = false;
+            document.getElementById('preciseConcurrent').disabled = false;
+
+            // 启用添加/删除按钮
+            const addBtn = document.querySelector('#preciseDownload .add-url-btn');
+            if (addBtn) addBtn.disabled = false;
+
+            const deleteButtons = document.querySelectorAll('#preciseDownload .delete-url-btn');
+            deleteButtons.forEach(btn => btn.disabled = false);
+
+            // 清空并重置URL列表
+            preciseUrlList.innerHTML = '';
+            addPreciseUrl(); // 添加一个空的URL项
+
+            // 延迟隐藏进度区域
+            setTimeout(() => {
+                preciseProgress.style.display = 'none';
+            }, 3000);
+        }
 
         socket.on('parallel_progress', function(data) {
             console.log('📊 收到进度更新:', {
@@ -2247,7 +2300,7 @@
         }
 
         // 处理分P确认显示（下载过程中的确认信息）
-        function handleEpisodesConfirmations(confirmations) {
+        function handleEpisodesConfirmations(confirmations, locked = false) {
             // 更新每个URL项的分P显示
             confirmations.forEach(confirmation => {
                 const item = preciseUrlList.children[confirmation.index];
@@ -2291,11 +2344,195 @@
                     partsInput.style.border = '2px solid #ffc107';
                     partsInput.value = `⚠️ ${confirmation.message}`;
                     partsInput.title = confirmation.message;
+
+                    // 失败时也要锁定，防止用户修改
+                    if (locked) {
+                        partsInput.readOnly = true;
+                        urlInput.readOnly = true;
+                        urlInput.style.backgroundColor = '#f8f9fa';
+                    }
                 }
             });
 
             // 更新按钮状态
-            preciseDownloadBtn.textContent = '下载中...';
+            if (locked) {
+                preciseDownloadBtn.disabled = true;
+                preciseDownloadBtn.textContent = '下载中...';
+
+                // 锁定所有配置选项
+                document.getElementById('preciseQuality').disabled = true;
+                document.getElementById('preciseAudioQuality').disabled = true;
+                document.getElementById('preciseConcurrent').disabled = true;
+
+                // 禁用添加/删除按钮
+                const addBtn = document.querySelector('#preciseDownload .add-url-btn');
+                if (addBtn) addBtn.disabled = true;
+
+                const deleteButtons = document.querySelectorAll('#preciseDownload .delete-url-btn');
+                deleteButtons.forEach(btn => btn.disabled = true);
+            }
+        }
+
+        // 恢复下载状态
+        function restoreDownloadState(source, data, confirmations, locked) {
+            if (source === 'single') {
+                // 恢复单个下载状态
+                const urls = data.urls || [];
+                if (urls.length > 0) {
+                    document.getElementById('singleUrl').value = urls[0];
+                }
+
+                const config = data.config || {};
+                document.getElementById('singleQuality').value = config.quality || 80;
+
+                // 应用锁定状态
+                if (locked) {
+                    lockDownloadInterface(source, data, confirmations);
+                }
+
+                // 切换到单个下载标签
+                switchTab('single');
+
+            } else if (source === 'parallel') {
+                // 恢复并行下载状态
+                const urls = data.urls || [];
+                document.getElementById('parallelUrls').value = urls.join('\n');
+
+                const config = data.config || {};
+                document.getElementById('parallelQuality').value = config.quality || 80;
+                document.getElementById('parallelAudioQuality').value = config.audio_quality || 30280;
+                document.getElementById('parallelConcurrent').value = config.concurrent || 2;
+
+                // 应用锁定状态
+                if (locked) {
+                    lockDownloadInterface(source, data, confirmations);
+                }
+
+                // 切换到并行下载标签
+                switchTab('parallel');
+
+            } else if (source === 'precise') {
+                // 恢复精准下载状态
+                const urlConfigs = data.url_configs || [];
+
+                // 清空现有列表
+                preciseUrlList.innerHTML = '';
+
+                // 重建URL列表
+                urlConfigs.forEach((config, index) => {
+                    addPreciseUrl();
+                    const item = preciseUrlList.children[index];
+                    if (item) {
+                        const urlInput = item.querySelector('.precise-url-input');
+                        const partsInput = item.querySelector('.precise-parts-input');
+
+                        urlInput.value = config.url;
+                        partsInput.value = config.episodes_selection || '';
+                    }
+                });
+
+                // 恢复配置
+                document.getElementById('preciseQuality').value = data.quality || 80;
+                document.getElementById('preciseAudioQuality').value = data.audio_quality || 30280;
+                document.getElementById('preciseConcurrent').value = data.concurrent || 2;
+
+                // 显示进度区域
+                preciseProgress.style.display = 'block';
+
+                // 应用分P确认信息和锁定状态
+                if (confirmations && confirmations.length > 0) {
+                    handleEpisodesConfirmations(confirmations, locked);
+                } else if (locked) {
+                    lockDownloadInterface(source, data, confirmations);
+                }
+
+                // 切换到精准下载标签
+                switchTab('precise');
+            }
+        }
+
+        // 统一的下载界面锁定函数
+        function lockDownloadInterface(source, data, confirmations = []) {
+            console.log(`🔒 锁定 ${source} 下载界面`);
+
+            if (source === 'single') {
+                // 锁定单个下载界面
+                document.getElementById('singleUrl').readOnly = true;
+                document.getElementById('singleUrl').style.backgroundColor = '#f8f9fa';
+                document.getElementById('singleUrl').style.border = '2px solid #28a745';
+
+                document.getElementById('singleQuality').disabled = true;
+                singleDownloadBtn.disabled = true;
+                singleDownloadBtn.textContent = '下载中...';
+
+                // 显示进度区域
+                singleProgress.classList.remove('hidden');
+
+            } else if (source === 'parallel') {
+                // 锁定并行下载界面
+                document.getElementById('parallelUrls').readOnly = true;
+                document.getElementById('parallelUrls').style.backgroundColor = '#f8f9fa';
+                document.getElementById('parallelUrls').style.border = '2px solid #28a745';
+
+                document.getElementById('parallelQuality').disabled = true;
+                document.getElementById('parallelAudioQuality').disabled = true;
+                document.getElementById('parallelConcurrent').disabled = true;
+                parallelDownloadBtn.disabled = true;
+                parallelDownloadBtn.textContent = '下载中...';
+
+                // 显示进度区域
+                parallelStatus.classList.remove('hidden');
+
+            } else if (source === 'precise') {
+                // 精准下载的锁定由专门的函数处理
+                if (confirmations && confirmations.length > 0) {
+                    handleEpisodesConfirmations(confirmations, true);
+                }
+            }
+        }
+
+        // 统一的下载界面解锁函数
+        function unlockDownloadInterface(source) {
+            console.log(`🔓 解锁 ${source} 下载界面`);
+
+            if (source === 'single') {
+                // 解锁单个下载界面
+                document.getElementById('singleUrl').readOnly = false;
+                document.getElementById('singleUrl').style.backgroundColor = '';
+                document.getElementById('singleUrl').style.border = '';
+                document.getElementById('singleUrl').value = '';  // 清空
+
+                document.getElementById('singleQuality').disabled = false;
+                singleDownloadBtn.disabled = false;
+                singleDownloadBtn.textContent = '🚀 开始下载';
+
+                // 延迟隐藏进度区域
+                setTimeout(() => {
+                    singleProgress.classList.add('hidden');
+                }, 3000);
+
+            } else if (source === 'parallel') {
+                // 解锁并行下载界面
+                document.getElementById('parallelUrls').readOnly = false;
+                document.getElementById('parallelUrls').style.backgroundColor = '';
+                document.getElementById('parallelUrls').style.border = '';
+                document.getElementById('parallelUrls').value = '';  // 清空
+
+                document.getElementById('parallelQuality').disabled = false;
+                document.getElementById('parallelAudioQuality').disabled = false;
+                document.getElementById('parallelConcurrent').disabled = false;
+                parallelDownloadBtn.disabled = false;
+                parallelDownloadBtn.textContent = '🚀 开始并行下载';
+
+                // 延迟隐藏进度区域
+                setTimeout(() => {
+                    parallelStatus.classList.add('hidden');
+                }, 3000);
+
+            } else if (source === 'precise') {
+                // 解锁精准下载界面
+                unlockPreciseDownloadInterface();
+            }
         }
     </script>
 </body>
