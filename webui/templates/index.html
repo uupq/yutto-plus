@@ -683,6 +683,7 @@
             <button class="tab active" onclick="switchTab('single')">单个下载</button>
             <button class="tab" onclick="switchTab('parallel')">并行下载</button>
             <button class="tab" onclick="switchTab('precise')">精准并行下载</button>
+            <button class="tab" onclick="switchTab('uploader')">UP主管理</button>
             <button class="tab" onclick="switchTab('config')">配置管理</button>
         </div>
 
@@ -844,6 +845,140 @@
                 <div class="task-list">
                     <h4>📋 任务详情</h4>
                     <div id="preciseTaskList"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- UP主管理 -->
+        <div id="uploaderTab" class="tab-content">
+            <div class="config-section">
+                <h3>👤 UP主投稿视频管理</h3>
+                <p>下载、更新、查看和管理UP主的所有投稿视频</p>
+
+                <!-- UP主信息输入 -->
+                <div class="form-group">
+                    <label for="uploaderInput">UP主UID或空间URL</label>
+                    <input type="text" id="uploaderInput" placeholder="例如: 1108252038 或 https://space.bilibili.com/1108252038">
+                    <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                        支持格式: UID数字 或 https://space.bilibili.com/UID
+                    </div>
+                </div>
+
+                <!-- 操作按钮组 -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                    <button type="button" class="btn btn-small" onclick="uploaderDownload()">
+                        📥 下载所有视频
+                    </button>
+                    <button type="button" class="btn btn-small" onclick="uploaderUpdate()">
+                        🔄 更新视频列表
+                    </button>
+                    <button type="button" class="btn btn-small" onclick="uploaderListOnly()">
+                        📋 仅查看列表
+                    </button>
+                    <button type="button" class="btn btn-small" onclick="uploaderDelete()" style="background: #dc3545;">
+                        🗑️ 删除视频文件
+                    </button>
+                </div>
+
+                <!-- 高级选项 -->
+                <details style="margin-bottom: 20px;">
+                    <summary style="cursor: pointer; font-weight: 600; color: #333; margin-bottom: 10px;">
+                        ⚙️ 高级选项
+                    </summary>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                        <div class="form-group">
+                            <label for="uploaderOutputDir">自定义输出目录（可选）</label>
+                            <input type="text" id="uploaderOutputDir" placeholder="留空使用配置文件中的目录">
+                        </div>
+                        <div class="form-group">
+                            <label for="uploaderConfig">配置文件</label>
+                            <select id="uploaderConfig">
+                                <option value="">使用默认配置</option>
+                            </select>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- UP主信息显示区域 -->
+                <div id="uploaderInfo" style="display: none; background: #e3f2fd; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 10px; color: #1976d2;">👤 UP主信息</h4>
+                    <div id="uploaderInfoContent"></div>
+                </div>
+
+                <!-- 视频列表显示区域 -->
+                <div id="uploaderVideoList" style="display: none;">
+                    <h4 style="margin-bottom: 15px; color: #333;">📺 投稿视频列表</h4>
+                    <div id="uploaderVideoListContent"></div>
+                </div>
+
+                <!-- 文件夹选择区域（删除功能专用） -->
+                <div id="uploaderFolderSelection" style="display: none;">
+                    <h4 style="margin-bottom: 15px; color: #dc3545;">🗑️ 选择要删除的UP主文件夹</h4>
+
+                    <!-- 筛选和全选控制 -->
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                        <div style="display: flex; gap: 15px; align-items: end; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 200px;">
+                                <label for="folderFilter" style="display: block; margin-bottom: 5px; font-weight: 600;">🔍 筛选文件夹</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" id="folderFilter" placeholder="输入UP主名称或UID进行筛选..."
+                                           style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"
+                                           onkeypress="if(event.key==='Enter') filterFolders()">
+                                    <button type="button" class="btn btn-small" onclick="filterFolders()" style="background: #007bff;">
+                                        🔍 筛选
+                                    </button>
+                                    <button type="button" class="btn btn-small" onclick="clearFilter()" style="background: #6c757d;">
+                                        🔄 重置
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 10px;">
+                                <button type="button" class="btn btn-small" onclick="selectAllFolders()" style="background: #28a745;">
+                                    ✅ 全选
+                                </button>
+                                <button type="button" class="btn btn-small" onclick="clearAllFolders()" style="background: #6c757d;">
+                                    ❌ 清空
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 文件夹列表 -->
+                    <div id="uploaderFolderList" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; background: white;">
+                        <!-- 动态生成的文件夹列表 -->
+                    </div>
+
+                    <!-- 选择统计 -->
+                    <div id="folderSelectionStats" style="margin: 15px 0; padding: 10px; background: #e3f2fd; border-radius: 8px; font-weight: 600;">
+                        已选择 <span id="selectedFolderCount">0</span> 个文件夹，共 <span id="totalFolderCount">0</span> 个
+                    </div>
+
+                    <!-- 操作按钮 -->
+                    <div style="display: flex; gap: 15px; justify-content: center;">
+                        <button type="button" class="btn" onclick="confirmDeleteSelectedFolders()" style="background: #dc3545; color: white;">
+                            🗑️ 删除选中的文件夹
+                        </button>
+                        <button type="button" class="btn" onclick="cancelFolderSelection()" style="background: #6c757d; color: white;">
+                            ❌ 取消
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 操作状态显示 -->
+                <div id="uploaderStatus" style="display: none;">
+                    <div class="parallel-status">
+                        <h4 id="uploaderStatusTitle">操作状态</h4>
+                        <div id="uploaderStatusContent"></div>
+                        <div id="uploaderProgress" class="progress-container" style="display: none;">
+                            <div class="progress-bar">
+                                <div id="uploaderProgressFill" class="progress-fill"></div>
+                            </div>
+                            <div class="progress-info">
+                                <span id="uploaderProgressText">准备中...</span>
+                                <span id="uploaderProgressPercent">0%</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1292,6 +1427,18 @@
                         });
                         configList.appendChild(item);
                     });
+
+                    // 同时填充UP主管理的配置下拉列表
+                    const uploaderConfigSelect = document.getElementById('uploaderConfig');
+                    if (uploaderConfigSelect) {
+                        uploaderConfigSelect.innerHTML = '<option value="">使用默认配置</option>';
+                        configs.forEach(config => {
+                            const option = document.createElement('option');
+                            option.value = config.filename;
+                            option.textContent = `${config.name} (${config.description})`;
+                            uploaderConfigSelect.appendChild(option);
+                        });
+                    }
                 })
                 .catch(error => {
                     showAlert('加载配置文件失败: ' + error.message, 'error');
@@ -2532,8 +2679,422 @@
             } else if (source === 'precise') {
                 // 解锁精准下载界面
                 unlockPreciseDownloadInterface();
+            } else if (source === 'uploader') {
+                // 解锁UP主管理界面
+                unlockUploaderInterface();
             }
         }
+
+        // ===== UP主管理功能 =====
+
+        // UP主下载
+        function uploaderDownload() {
+            const uploader = document.getElementById('uploaderInput').value.trim();
+            if (!uploader) {
+                alert('请输入UP主UID或空间URL');
+                return;
+            }
+
+            showUploaderStatus('📥 下载所有视频', '正在准备下载...');
+
+            const config = document.getElementById('uploaderConfig').value;
+            const outputDir = document.getElementById('uploaderOutputDir').value.trim();
+
+            const data = {
+                uploader: uploader,
+                action: 'download',
+                config: config || null,
+                output_dir: outputDir || null
+            };
+
+            lockUploaderInterface();
+            socket.emit('uploader_action', data);
+        }
+
+        // UP主更新
+        function uploaderUpdate() {
+            const uploader = document.getElementById('uploaderInput').value.trim();
+            if (!uploader) {
+                alert('请输入UP主UID或空间URL');
+                return;
+            }
+
+            showUploaderStatus('🔄 更新视频列表', '正在检查新投稿...');
+
+            const config = document.getElementById('uploaderConfig').value;
+            const outputDir = document.getElementById('uploaderOutputDir').value.trim();
+
+            const data = {
+                uploader: uploader,
+                action: 'update',
+                config: config || null,
+                output_dir: outputDir || null
+            };
+
+            lockUploaderInterface();
+            socket.emit('uploader_action', data);
+        }
+
+        // UP主列表查看
+        function uploaderListOnly() {
+            const uploader = document.getElementById('uploaderInput').value.trim();
+            if (!uploader) {
+                alert('请输入UP主UID或空间URL');
+                return;
+            }
+
+            showUploaderStatus('📋 获取视频列表', '正在获取UP主信息...');
+
+            const config = document.getElementById('uploaderConfig').value;
+            const outputDir = document.getElementById('uploaderOutputDir').value.trim();
+
+            const data = {
+                uploader: uploader,
+                action: 'list',
+                config: config || null,
+                output_dir: outputDir || null
+            };
+
+            lockUploaderInterface();
+            socket.emit('uploader_action', data);
+        }
+
+        // UP主删除
+        function uploaderDelete() {
+            // 首先让用户选择要删除的目录
+            let deleteDir = document.getElementById('uploaderOutputDir').value.trim();
+            const config = document.getElementById('uploaderConfig').value;
+
+            // 如果没有指定目录，提示用户输入
+            if (!deleteDir) {
+                // 尝试从配置文件获取默认路径
+                let defaultPath = '';
+                if (config && currentConfig) {
+                    defaultPath = currentConfig.output_dir || '';
+                } else {
+                    defaultPath = '~/Downloads/upper';
+                }
+
+                deleteDir = prompt(
+                    '请输入要扫描UP主文件夹的目录路径：\n\n' +
+                    '这个目录下应该包含UP主文件夹（格式：UID-用户名）\n' +
+                    '例如：~/Downloads/upper 或 /path/to/bilibili/downloads',
+                    defaultPath
+                );
+
+                if (!deleteDir || !deleteDir.trim()) {
+                    alert('删除操作已取消：未指定目录路径');
+                    return;
+                }
+
+                deleteDir = deleteDir.trim();
+            }
+
+            // 扫描文件夹并显示选择界面
+            showUploaderStatus('🔍 扫描UP主文件夹', `正在扫描目录：${deleteDir}`);
+
+            const data = {
+                action: 'scan_folders',
+                config: config || null,
+                output_dir: deleteDir
+            };
+
+            socket.emit('uploader_action', data);
+        }
+
+        // 文件夹选择相关功能
+        let allFolders = [];
+        let selectedFolders = new Set();
+
+        // 显示文件夹选择界面
+        function showFolderSelection(folders, scanDir) {
+            allFolders = folders;
+            selectedFolders.clear();
+
+            // 隐藏其他区域，显示文件夹选择区域
+            document.getElementById('uploaderStatus').style.display = 'none';
+            document.getElementById('uploaderInfo').style.display = 'none';
+            document.getElementById('uploaderVideoList').style.display = 'none';
+            document.getElementById('uploaderFolderSelection').style.display = 'block';
+
+            // 存储扫描目录
+            document.getElementById('uploaderFolderSelection').dataset.scanDir = scanDir;
+
+            // 渲染文件夹列表
+            renderFolderList();
+
+            // 清空筛选输入框
+            const filterInput = document.getElementById('folderFilter');
+            filterInput.value = '';
+        }
+
+        // 渲染文件夹列表
+        function renderFolderList() {
+            const folderList = document.getElementById('uploaderFolderList');
+
+            folderList.innerHTML = '';
+
+            if (allFolders.length === 0) {
+                folderList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">未找到符合条件的UP主文件夹</div>';
+                updateSelectionStats();
+                return;
+            }
+
+            // 显示所有文件夹，不进行过滤
+            allFolders.forEach((folder, index) => {
+
+                const isSelected = selectedFolders.has(index);
+
+                const folderItem = document.createElement('div');
+                folderItem.className = `folder-item ${isSelected ? 'selected' : ''}`;
+                folderItem.style.cssText = `
+                    padding: 12px 15px;
+                    border-bottom: 1px solid #eee;
+                    display: flex;
+                    align-items: center;
+                    cursor: pointer;
+                    transition: background-color 0.2s;
+                    ${isSelected ? 'background-color: #e3f2fd; border-left: 4px solid #2196f3;' : ''}
+                `;
+
+                folderItem.innerHTML = `
+                    <input type="checkbox" ${isSelected ? 'checked' : ''}
+                           style="margin-right: 12px; transform: scale(1.2);"
+                           onchange="toggleFolderSelection(${index})">
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; color: #333; margin-bottom: 4px;">
+                            📁 ${folder.name}
+                        </div>
+                        <div style="font-size: 12px; color: #666; font-family: monospace;">
+                            ${folder.path}
+                        </div>
+                        <div style="font-size: 11px; color: #999; margin-top: 2px;">
+                            ${folder.file_count} 个文件 | ${folder.size_info}
+                        </div>
+                    </div>
+                `;
+
+                // 点击整行也能选择
+                folderItem.addEventListener('click', (e) => {
+                    if (e.target.type !== 'checkbox') {
+                        toggleFolderSelection(index);
+                    }
+                });
+
+                folderList.appendChild(folderItem);
+            });
+
+            updateSelectionStats();
+        }
+
+        // 切换文件夹选择状态
+        function toggleFolderSelection(index) {
+            if (selectedFolders.has(index)) {
+                selectedFolders.delete(index);
+            } else {
+                selectedFolders.add(index);
+            }
+            renderFolderList();
+        }
+
+        // 筛选文件夹（筛选并自动选中匹配的文件夹）
+        function filterFolders() {
+            const filterText = document.getElementById('folderFilter').value.trim().toLowerCase();
+
+            if (filterText) {
+                // 自动选中所有匹配的文件夹
+                allFolders.forEach((folder, index) => {
+                    // 只检查文件夹名称（相对路径），不包括完整路径
+                    if (folder.name.toLowerCase().includes(filterText)) {
+                        selectedFolders.add(index);
+                    }
+                });
+            }
+
+            renderFolderList();
+        }
+
+        // 清除筛选
+        function clearFilter() {
+            document.getElementById('folderFilter').value = '';
+            renderFolderList();
+        }
+
+        // 全选文件夹（选中所有文件夹）
+        function selectAllFolders() {
+            allFolders.forEach((folder, index) => {
+                selectedFolders.add(index);
+            });
+
+            renderFolderList();
+        }
+
+        // 清空选择
+        function clearAllFolders() {
+            selectedFolders.clear();
+            renderFolderList();
+        }
+
+        // 更新选择统计
+        function updateSelectionStats() {
+            const selectedCount = selectedFolders.size;
+            const totalCount = allFolders.length;
+
+            document.getElementById('selectedFolderCount').textContent = selectedCount;
+            document.getElementById('totalFolderCount').textContent = totalCount;
+        }
+
+        // 确认删除选中的文件夹
+        function confirmDeleteSelectedFolders() {
+            if (selectedFolders.size === 0) {
+                alert('请至少选择一个文件夹进行删除');
+                return;
+            }
+
+            const selectedFolderList = Array.from(selectedFolders).map(index => allFolders[index]);
+            const folderNames = selectedFolderList.map(f => f.name).join('\n• ');
+
+            if (!confirm(`⚠️ 警告：即将删除以下 ${selectedFolders.size} 个UP主文件夹中的视频文件：\n\n• ${folderNames}\n\n` +
+                        `• 会删除：所有视频文件、字幕文件、封面图片、子文件夹\n` +
+                        `• 会保留：video_urls.csv 记录文件\n\n` +
+                        `确定要继续吗？`)) {
+                return;
+            }
+
+            // 最终确认
+            const confirmText = prompt('请输入"确认删除"来最终确认操作：');
+            if (confirmText !== '确认删除') {
+                alert('删除操作已取消：确认文字不正确');
+                return;
+            }
+
+            // 隐藏文件夹选择界面，显示状态
+            document.getElementById('uploaderFolderSelection').style.display = 'none';
+            showUploaderStatus('🗑️ 删除视频文件', `正在删除 ${selectedFolders.size} 个文件夹中的视频文件...`);
+
+            const scanDir = document.getElementById('uploaderFolderSelection').dataset.scanDir;
+            const selectedPaths = selectedFolderList.map(f => f.path);
+
+            const data = {
+                action: 'delete_selected',
+                scan_dir: scanDir,
+                selected_paths: selectedPaths
+            };
+
+            lockUploaderInterface();
+            socket.emit('uploader_action', data);
+        }
+
+        // 取消文件夹选择
+        function cancelFolderSelection() {
+            document.getElementById('uploaderFolderSelection').style.display = 'none';
+            unlockUploaderInterface();
+        }
+
+        // 显示UP主操作状态
+        function showUploaderStatus(title, message) {
+            const statusDiv = document.getElementById('uploaderStatus');
+            const titleDiv = document.getElementById('uploaderStatusTitle');
+            const contentDiv = document.getElementById('uploaderStatusContent');
+
+            titleDiv.textContent = title;
+            contentDiv.innerHTML = `<p>${message}</p>`;
+            statusDiv.style.display = 'block';
+
+            // 隐藏其他区域
+            document.getElementById('uploaderInfo').style.display = 'none';
+            document.getElementById('uploaderVideoList').style.display = 'none';
+        }
+
+        // 锁定UP主管理界面
+        function lockUploaderInterface() {
+            const buttons = document.querySelectorAll('#uploaderTab button');
+            const inputs = document.querySelectorAll('#uploaderTab input, #uploaderTab select');
+
+            buttons.forEach(btn => btn.disabled = true);
+            inputs.forEach(input => input.disabled = true);
+        }
+
+        // 解锁UP主管理界面
+        function unlockUploaderInterface() {
+            const buttons = document.querySelectorAll('#uploaderTab button');
+            const inputs = document.querySelectorAll('#uploaderTab input, #uploaderTab select');
+
+            buttons.forEach(btn => btn.disabled = false);
+            inputs.forEach(input => input.disabled = false);
+
+            // 隐藏状态区域
+            setTimeout(() => {
+                document.getElementById('uploaderStatus').style.display = 'none';
+            }, 3000);
+        }
+
+        // ===== UP主管理Socket事件监听 =====
+
+        // UP主操作状态
+        socket.on('uploader_status', function(data) {
+            showUploaderStatus('操作状态', data.message);
+        });
+
+        // UP主操作进度
+        socket.on('uploader_progress', function(data) {
+            const contentDiv = document.getElementById('uploaderStatusContent');
+            const currentContent = contentDiv.innerHTML;
+
+            // 添加新的进度行
+            contentDiv.innerHTML = currentContent + `<div style="font-family: monospace; font-size: 12px; color: #666; margin: 2px 0;">${data.line}</div>`;
+
+            // 自动滚动到底部
+            contentDiv.scrollTop = contentDiv.scrollHeight;
+        });
+
+        // UP主操作成功
+        socket.on('uploader_success', function(data) {
+            const statusDiv = document.getElementById('uploaderStatus');
+            const titleDiv = document.getElementById('uploaderStatusTitle');
+            const contentDiv = document.getElementById('uploaderStatusContent');
+
+            titleDiv.textContent = `✅ ${data.action}操作完成`;
+            titleDiv.style.color = '#28a745';
+
+            // 显示成功信息
+            contentDiv.innerHTML += `<div style="color: #28a745; font-weight: 600; margin-top: 10px;">${data.message}</div>`;
+
+            // 解锁界面
+            setTimeout(() => {
+                unlockUploaderInterface();
+            }, 2000);
+        });
+
+        // UP主操作错误
+        socket.on('uploader_error', function(data) {
+            const statusDiv = document.getElementById('uploaderStatus');
+            const titleDiv = document.getElementById('uploaderStatusTitle');
+            const contentDiv = document.getElementById('uploaderStatusContent');
+
+            titleDiv.textContent = '❌ 操作失败';
+            titleDiv.style.color = '#dc3545';
+
+            // 显示错误信息
+            contentDiv.innerHTML += `<div style="color: #dc3545; font-weight: 600; margin-top: 10px;">${data.message}</div>`;
+
+            // 解锁界面
+            setTimeout(() => {
+                unlockUploaderInterface();
+            }, 3000);
+        });
+
+        // 文件夹扫描结果
+        socket.on('uploader_folders_scanned', function(data) {
+            if (data.success) {
+                showFolderSelection(data.folders, data.scan_dir);
+            } else {
+                showUploaderStatus('❌ 扫描失败', data.message);
+                setTimeout(() => {
+                    unlockUploaderInterface();
+                }, 3000);
+            }
+        });
     </script>
 </body>
 </html>

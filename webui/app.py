@@ -1143,6 +1143,340 @@ def find_available_port():
     print("❌ 无法找到可用端口")
     return None
 
+@socketio.on('uploader_action')
+def handle_uploader_action(data):
+    """处理UP主管理操作"""
+    session_id = request.sid
+
+    try:
+        action = data.get('action')
+        uploader = data.get('uploader')
+        config_file = data.get('config')
+        output_dir = data.get('output_dir')
+
+        emit('uploader_status', {
+            'status': 'processing',
+            'message': f'正在处理{action}操作...'
+        })
+
+        if action == 'delete':
+            # 删除操作（旧版本，保留兼容性）
+            handle_uploader_delete_action(session_id, config_file, output_dir)
+        elif action == 'scan_folders':
+            # 扫描文件夹操作
+            handle_uploader_scan_folders(session_id, config_file, output_dir)
+        elif action == 'delete_selected':
+            # 删除选中的文件夹
+            handle_uploader_delete_selected(session_id, data)
+        elif action in ['download', 'update', 'list']:
+            # 下载、更新、列表操作
+            handle_uploader_video_action(session_id, action, uploader, config_file, output_dir)
+        else:
+            emit('uploader_error', {'message': f'未知操作: {action}'})
+
+    except Exception as e:
+        emit('uploader_error', {'message': f'处理UP主操作时出错: {str(e)}'})
+
+def handle_uploader_delete_action(session_id, config_file, output_dir):
+    """处理UP主删除操作"""
+    import subprocess
+    import threading
+
+    def run_delete():
+        try:
+            # 构建命令
+            cmd = ['python', 'yutto-plus-cli.py']
+
+            if config_file:
+                cmd.extend(['--config', f'configs/{config_file}'])
+
+            cmd.append('--delete-uploader')
+
+            if output_dir:
+                cmd.append(output_dir)
+
+            # 模拟用户确认输入
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=Path(__file__).parent.parent
+            )
+
+            # 发送确认输入
+            output, _ = process.communicate(input="yes\nDELETE\n")
+
+            if process.returncode == 0:
+                socketio.emit('uploader_success', {
+                    'action': 'delete',
+                    'message': '删除操作完成',
+                    'output': output
+                }, room=session_id)
+            else:
+                socketio.emit('uploader_error', {
+                    'message': f'删除操作失败: {output}'
+                }, room=session_id)
+
+        except Exception as e:
+            socketio.emit('uploader_error', {
+                'message': f'删除操作出错: {str(e)}'
+            }, room=session_id)
+
+    # 在后台线程中运行
+    threading.Thread(target=run_delete, daemon=True).start()
+
+def handle_uploader_video_action(session_id, action, uploader, config_file, output_dir):
+    """处理UP主视频操作（下载、更新、列表）"""
+    import subprocess
+    import threading
+
+    def run_action():
+        try:
+            # 构建命令
+            cmd = ['python', 'yutto-plus-cli.py']
+
+            if config_file:
+                cmd.extend(['--config', f'configs/{config_file}'])
+
+            cmd.extend(['--uploader', uploader])
+
+            if action == 'update':
+                cmd.append('--update-uploader')
+            elif action == 'list':
+                cmd.append('--list-only')
+
+            if output_dir:
+                cmd.extend(['-o', output_dir])
+
+            # 运行命令
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=Path(__file__).parent.parent
+            )
+
+            # 实时读取输出
+            output_lines = []
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    line = line.strip()
+                    output_lines.append(line)
+
+                    # 发送实时状态更新
+                    socketio.emit('uploader_progress', {
+                        'action': action,
+                        'line': line
+                    }, room=session_id)
+
+            # 等待进程完成
+            process.wait()
+
+            if process.returncode == 0:
+                socketio.emit('uploader_success', {
+                    'action': action,
+                    'message': f'{action}操作完成',
+                    'output': '\n'.join(output_lines)
+                }, room=session_id)
+            else:
+                socketio.emit('uploader_error', {
+                    'message': f'{action}操作失败: {" ".join(output_lines[-5:])}'
+                }, room=session_id)
+
+        except Exception as e:
+            socketio.emit('uploader_error', {
+                'message': f'{action}操作出错: {str(e)}'
+            }, room=session_id)
+
+    # 在后台线程中运行
+    threading.Thread(target=run_action, daemon=True).start()
+
+def handle_uploader_scan_folders(session_id, config_file, output_dir):
+    """扫描UP主文件夹"""
+    import os
+    import re
+    import threading
+
+    def run_scan():
+        try:
+            # 获取扫描目录
+            scan_dir = output_dir
+            if not scan_dir and config_file:
+                # 从配置文件获取
+                config_path = Path(__file__).parent.parent / 'configs' / config_file
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f)
+                        scan_dir = config.get('output_dir', '~/Downloads/upper')
+
+            if not scan_dir:
+                scan_dir = '~/Downloads/upper'
+
+            # 展开路径
+            abs_path = Path(scan_dir).expanduser().resolve()
+
+            if not abs_path.exists() or not abs_path.is_dir():
+                socketio.emit('uploader_folders_scanned', {
+                    'success': False,
+                    'message': f'目录不存在或不是有效目录: {abs_path}'
+                }, room=session_id)
+                return
+
+            # 扫描符合条件的文件夹
+            folders = []
+            for item in abs_path.iterdir():
+                if item.is_dir():
+                    # 检查是否符合 UID-用户名 格式
+                    if re.match(r'^\d+-.*$', item.name):
+                        csv_file = item / "video_urls.csv"
+                        if csv_file.exists():
+                            # 统计文件信息
+                            file_count = 0
+                            total_size = 0
+
+                            try:
+                                for file_item in item.rglob("*"):
+                                    if file_item.is_file() and file_item.name.lower() != "video_urls.csv":
+                                        file_count += 1
+                                        total_size += file_item.stat().st_size
+
+                                # 格式化大小信息
+                                if total_size > 1024 * 1024 * 1024:
+                                    size_info = f"{total_size / (1024 * 1024 * 1024):.1f} GB"
+                                elif total_size > 1024 * 1024:
+                                    size_info = f"{total_size / (1024 * 1024):.1f} MB"
+                                else:
+                                    size_info = f"{total_size / 1024:.1f} KB"
+
+                            except Exception as e:
+                                file_count = 0
+                                size_info = "未知大小"
+
+                            folders.append({
+                                'name': item.name,
+                                'path': str(item),
+                                'file_count': file_count,
+                                'size_info': size_info
+                            })
+
+            # 按名称排序
+            folders.sort(key=lambda x: x['name'])
+
+            socketio.emit('uploader_folders_scanned', {
+                'success': True,
+                'folders': folders,
+                'scan_dir': str(abs_path)
+            }, room=session_id)
+
+        except Exception as e:
+            socketio.emit('uploader_folders_scanned', {
+                'success': False,
+                'message': f'扫描文件夹时出错: {str(e)}'
+            }, room=session_id)
+
+    # 在后台线程中运行
+    threading.Thread(target=run_scan, daemon=True).start()
+
+def handle_uploader_delete_selected(session_id, data):
+    """删除选中的UP主文件夹"""
+    import shutil
+    import threading
+
+    def run_delete():
+        try:
+            selected_paths = data.get('selected_paths', [])
+            if not selected_paths:
+                socketio.emit('uploader_error', {
+                    'message': '没有选择要删除的文件夹'
+                }, room=session_id)
+                return
+
+            deleted_items_count = 0
+            error_count = 0
+            processed_folders = 0
+
+            for folder_path in selected_paths:
+                try:
+                    folder = Path(folder_path)
+                    if not folder.exists() or not folder.is_dir():
+                        socketio.emit('uploader_progress', {
+                            'action': 'delete_selected',
+                            'line': f'⚠️ 跳过不存在的文件夹: {folder.name}'
+                        }, room=session_id)
+                        continue
+
+                    socketio.emit('uploader_progress', {
+                        'action': 'delete_selected',
+                        'line': f'📂 处理文件夹: {folder.name}'
+                    }, room=session_id)
+
+                    # 获取所有项目
+                    items = list(folder.iterdir())
+                    non_csv_items = [item for item in items if item.name.lower() != "video_urls.csv"]
+
+                    if not non_csv_items:
+                        socketio.emit('uploader_progress', {
+                            'action': 'delete_selected',
+                            'line': f'   ℹ️ 没有要删除的项目（只有video_urls.csv）'
+                        }, room=session_id)
+                        processed_folders += 1
+                        continue
+
+                    # 删除项目
+                    for item in non_csv_items:
+                        try:
+                            if item.is_file() or item.is_symlink():
+                                item.unlink()
+                                socketio.emit('uploader_progress', {
+                                    'action': 'delete_selected',
+                                    'line': f'   - 已删除文件: {item.name}'
+                                }, room=session_id)
+                                deleted_items_count += 1
+                            elif item.is_dir():
+                                shutil.rmtree(item)
+                                socketio.emit('uploader_progress', {
+                                    'action': 'delete_selected',
+                                    'line': f'   - 已删除文件夹: {item.name}'
+                                }, room=session_id)
+                                deleted_items_count += 1
+                        except Exception as e:
+                            socketio.emit('uploader_progress', {
+                                'action': 'delete_selected',
+                                'line': f'   ❌ 删除 {item.name} 时出错: {e}'
+                            }, room=session_id)
+                            error_count += 1
+
+                    processed_folders += 1
+
+                except Exception as e:
+                    socketio.emit('uploader_progress', {
+                        'action': 'delete_selected',
+                        'line': f'❌ 处理文件夹 {Path(folder_path).name} 时出错: {e}'
+                    }, room=session_id)
+                    error_count += 1
+
+            # 发送完成信息
+            socketio.emit('uploader_success', {
+                'action': 'delete_selected',
+                'message': f'删除完成！处理了 {processed_folders} 个文件夹，删除了 {deleted_items_count} 个项目' +
+                          (f'，遇到 {error_count} 个错误' if error_count > 0 else ''),
+                'output': f'删除统计：\n- 处理文件夹: {processed_folders}\n- 删除项目: {deleted_items_count}\n- 错误数量: {error_count}'
+            }, room=session_id)
+
+        except Exception as e:
+            socketio.emit('uploader_error', {
+                'message': f'删除操作出错: {str(e)}'
+            }, room=session_id)
+
+    # 在后台线程中运行
+    threading.Thread(target=run_delete, daemon=True).start()
+
 def open_browser_delayed(url, delay=2):
     """延迟打开浏览器"""
     time.sleep(delay)
