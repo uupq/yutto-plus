@@ -18,6 +18,9 @@ import sys
 import requests
 import random
 import re
+import subprocess
+import signal
+import atexit
 
 # 添加src目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -32,6 +35,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 downloader = None
 config_manager = ConfigManager()
 active_downloads = {}  # {session_id: {downloader, tasks}}
+active_uploader_processes = {}  # 跟踪UP主相关的子进程 {session_id: [process_list]}
 
 # 全局下载器和任务管理
 global_downloader = None
@@ -51,11 +55,24 @@ def save_task_info(session_id: str, task_id: str, source: str, task_info: dict):
     }
 
 def get_active_tasks_by_source(source: str):
-    """获取指定来源的所有活跃任务"""
+    """获取指定来源的所有活跃任务，并验证它们是否真的在运行"""
     active_tasks = {}
+
+    # 首先从持久化存储中获取活跃任务
     for task_id, task_data in persistent_tasks.items():
         if task_data['source'] == source and task_data['status'] == 'active':
-            active_tasks[task_id] = task_data
+            # 验证任务是否真的在全局下载器中运行
+            if global_downloader is not None:
+                if task_id in global_downloader.tasks_progress:
+                    active_tasks[task_id] = task_data
+                else:
+                    # 任务不在下载器中，标记为已完成
+                    print(f"🔄 任务 {task_id} 不在下载器中，标记为已完成")
+                    mark_task_completed(task_id)
+            else:
+                # 没有全局下载器，清理所有持久化任务
+                print(f"🔄 没有全局下载器，清理任务 {task_id}")
+                mark_task_completed(task_id)
 
     return active_tasks
 
@@ -70,6 +87,19 @@ def cleanup_completed_tasks():
                       if task_data['status'] == 'completed']
     for task_id in completed_tasks:
         del persistent_tasks[task_id]
+
+def cleanup_session_tasks(session_id: str, source: str):
+    """清理指定会话和来源的所有任务"""
+    tasks_to_remove = []
+    for task_id, task_data in persistent_tasks.items():
+        if task_data.get('session_id') == session_id and task_data.get('source') == source:
+            tasks_to_remove.append(task_id)
+
+    for task_id in tasks_to_remove:
+        del persistent_tasks[task_id]
+        print(f"🧹 清理持久化任务: {task_id} (会话: {session_id}, 来源: {source})")
+
+    print(f"✅ 已清理 {len(tasks_to_remove)} 个持久化任务")
 
 def parse_url_with_parts(url_string: str):
     """
@@ -613,10 +643,41 @@ def handle_disconnect():
     session_id = request.sid
     print(f'🔌 [断开] 客户端已断开: {session_id}')
 
+    # 清理UP主相关的子进程
+    cleanup_uploader_processes(session_id)
+
     # 只清理会话数据，不关闭下载器
     if session_id in active_downloads:
         print(f'📋 清理会话数据: {session_id}')
         del active_downloads[session_id]
+
+def cleanup_uploader_processes(session_id):
+    """清理指定会话的UP主相关子进程"""
+    if session_id in active_uploader_processes:
+        processes = active_uploader_processes[session_id]
+        print(f'🧹 清理 {len(processes)} 个UP主相关进程 (会话: {session_id})')
+
+        for process in processes:
+            try:
+                if process.poll() is None:  # 进程仍在运行
+                    print(f'🔪 终止进程 PID: {process.pid}')
+                    process.terminate()
+
+                    # 等待进程终止，最多等待5秒
+                    try:
+                        process.wait(timeout=5)
+                        print(f'✅ 进程 {process.pid} 已正常终止')
+                    except subprocess.TimeoutExpired:
+                        # 强制杀死进程
+                        print(f'⚡ 强制杀死进程 {process.pid}')
+                        process.kill()
+                        process.wait()
+                        print(f'💀 进程 {process.pid} 已强制终止')
+            except Exception as e:
+                print(f'⚠️ 清理进程时出错: {e}')
+
+        # 清理进程列表
+        del active_uploader_processes[session_id]
 
     # 不清理任务数据，保持任务持久化
 
@@ -906,7 +967,8 @@ def handle_parallel_download_request(data):
             'total_tasks': len(tasks),
             'concurrent': merged_config.get('concurrent', 2),
             'sessdata_configured': bool(merged_config.get('sessdata')),
-            'login_status': '已登录会员账户' if merged_config.get('sessdata') else '未登录，只能下载普通清晰度'
+            'login_status': '已登录会员账户' if merged_config.get('sessdata') else '未登录，只能下载普通清晰度',
+            'source': source  # 添加来源信息
         })
         
         # 在后台监控完成状态
@@ -914,18 +976,29 @@ def handle_parallel_download_request(data):
             while True:
                 time.sleep(2)
                 queue_status = downloader_instance.task_manager.get_queue_status()
-                
+
                 if queue_status['running'] == 0 and queue_status['pending'] == 0:
                     # 所有任务完成
                     final_status = downloader_instance.task_manager.get_queue_status()
                     tasks_info = downloader_instance.get_tasks_summary_info()
-                    
+
+                    # 清理当前会话的持久化任务
+                    source = active_downloads[session_id].get('source', 'parallel')
+                    cleanup_session_tasks(session_id, source)
+
+                    print(f'📤 [发送事件] 准备发送 parallel_download_complete 事件到会话 {session_id}')
+                    print(f'📤 [事件数据] final_status: {final_status}')
+                    print(f'📤 [事件数据] source: {source}')
+                    print(f'📤 [事件数据] session_id: {session_id}')
+
                     socketio.emit('parallel_download_complete', {
                         'final_status': final_status,
                         'tasks_info': tasks_info,
-                        'session_id': session_id
+                        'session_id': session_id,
+                        'source': source
                     }, room=session_id)
-                    
+
+                    print(f'✅ [事件已发送] parallel_download_complete 事件已发送到会话 {session_id}')
                     print(f'🎉 [完成] 会话 {session_id} 并行下载完成')
                     break
         
@@ -966,18 +1039,20 @@ def handle_check_active_tasks(data):
     session_id = request.sid
     source = data.get('source', 'single')  # 'single', 'parallel', 'precise'
 
-    print(f"🔍 检查活跃任务: 会话={session_id}, 来源={source}")
+    print(f"🔍🔍🔍 [后端] 检查活跃任务: 会话={session_id}, 来源={source} 🔍🔍🔍")
 
     # 获取指定来源的活跃任务
     active_tasks = get_active_tasks_by_source(source)
+    print(f"📊 [后端] 持久化任务查询结果: {active_tasks}")
 
     if not active_tasks:
-        print(f"ℹ️ 没有找到来源为 {source} 的活跃任务")
+        print(f"ℹ️ [后端] 没有找到来源为 {source} 的活跃任务")
         emit('active_tasks_result', {
             'source': source,
             'has_active_tasks': False,
             'tasks': {}
         })
+        print(f"📤 [后端] 已发送 has_active_tasks=False 到前端")
         return
 
     # 检查这些任务是否还在运行
@@ -1004,6 +1079,7 @@ def handle_check_active_tasks(data):
                     }
 
             if running_tasks:
+                print(f"✅ [后端] 找到 {len(running_tasks)} 个运行中的任务")
                 # 发送任务信息和当前进度
                 emit('active_tasks_result', {
                     'source': source,
@@ -1019,6 +1095,7 @@ def handle_check_active_tasks(data):
                     },
                     'tasks': running_tasks
                 })
+                print(f"📤 [后端] 已发送 has_active_tasks=True 到前端")
 
                 # 启动定期进度更新（为刷新后的客户端）
                 def send_periodic_updates():
@@ -1067,16 +1144,18 @@ def handle_check_active_tasks(data):
                 # 在后台线程中启动定期更新
                 threading.Thread(target=send_periodic_updates, daemon=True).start()
             else:
-                print(f"ℹ️ {source} 任务已完成或不再运行")
+                print(f"ℹ️ [后端] {source} 任务已完成或不再运行")
                 # 标记任务为已完成
                 for task_id in active_tasks.keys():
-                    mark_task_completed(session_id, task_id)
+                    print(f"🧹 [后端] 标记任务 {task_id} 为已完成")
+                    mark_task_completed(task_id)
 
                 emit('active_tasks_result', {
                     'source': source,
                     'has_active_tasks': False,
                     'tasks': {}
                 })
+                print(f"📤 [后端] 已发送 has_active_tasks=False 到前端 (任务已完成)")
 
         except Exception as e:
             print(f"❌ 检查任务状态失败: {e}")
@@ -1234,66 +1313,77 @@ def handle_uploader_delete_action(session_id, config_file, output_dir):
     threading.Thread(target=run_delete, daemon=True).start()
 
 def handle_uploader_video_action(session_id, action, uploader, config_file, output_dir):
-    """处理UP主视频操作（下载、更新、列表）"""
-    import subprocess
+    """处理UP主视频操作（下载、更新、列表）- 使用并行下载机制"""
+    import asyncio
     import threading
 
     def run_action():
         try:
-            # 构建命令
-            cmd = ['python', 'yutto-plus-cli.py']
+            # 获取会话的下载器
+            if session_id not in active_downloads:
+                init_downloader(session_id)
 
+            downloader_instance = active_downloads[session_id]['downloader']
+
+            # 加载配置
+            config = active_downloads[session_id]['config'].copy()
             if config_file:
-                cmd.extend(['--config', f'configs/{config_file}'])
+                config_path = Path(__file__).parent.parent / 'configs' / config_file
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        file_config = yaml.safe_load(f)
+                        config.update(file_config)
 
-            cmd.extend(['--uploader', uploader])
-
-            if action == 'update':
-                cmd.append('--update-uploader')
-            elif action == 'list':
-                cmd.append('--list-only')
-
+            # 设置输出目录 - UP主下载使用专门的目录
             if output_dir:
-                cmd.extend(['-o', output_dir])
-
-            # 运行命令
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                cwd=Path(__file__).parent.parent
-            )
-
-            # 实时读取输出
-            output_lines = []
-            while True:
-                line = process.stdout.readline()
-                if not line and process.poll() is not None:
-                    break
-                if line:
-                    line = line.strip()
-                    output_lines.append(line)
-
-                    # 发送实时状态更新
-                    socketio.emit('uploader_progress', {
-                        'action': action,
-                        'line': line
-                    }, room=session_id)
-
-            # 等待进程完成
-            process.wait()
-
-            if process.returncode == 0:
-                socketio.emit('uploader_success', {
-                    'action': action,
-                    'message': f'{action}操作完成',
-                    'output': '\n'.join(output_lines)
-                }, room=session_id)
+                config['output_dir'] = output_dir
             else:
-                socketio.emit('uploader_error', {
-                    'message': f'{action}操作失败: {" ".join(output_lines[-5:])}'
-                }, room=session_id)
+                # 如果没有指定输出目录，使用UP主专用目录
+                if 'output_dir' not in config or not config['output_dir']:
+                    config['output_dir'] = '~/Downloads/upper'
+                else:
+                    # 如果配置文件中有普通下载目录，转换为UP主目录
+                    base_dir = config['output_dir']
+                    if base_dir.endswith('/Bilibili'):
+                        config['output_dir'] = base_dir.replace('/Bilibili', '/upper')
+                    elif not base_dir.endswith('/upper'):
+                        config['output_dir'] = str(Path(base_dir).parent / 'upper')
+
+            # 运行异步操作获取视频列表
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                if action == 'list':
+                    # 仅列表操作
+                    result = loop.run_until_complete(run_uploader_list_action(uploader, session_id, config))
+                    if result:
+                        socketio.emit('uploader_success', {
+                            'action': action,
+                            'message': f'{action}操作完成',
+                            'output': f'{action}操作成功完成'
+                        }, room=session_id)
+                    else:
+                        socketio.emit('uploader_error', {
+                            'message': f'{action}操作失败'
+                        }, room=session_id)
+                else:
+                    # 下载或更新操作 - 获取视频URL列表和用户目录
+                    urls, user_directory = loop.run_until_complete(get_uploader_video_urls(uploader, session_id, config, action == 'update'))
+
+                    if not urls:
+                        socketio.emit('uploader_success', {
+                            'action': action,
+                            'message': f'没有找到需要{action}的视频',
+                            'output': f'没有找到需要{action}的视频'
+                        }, room=session_id)
+                        return
+
+                    # 使用并行下载机制，传递用户目录
+                    start_uploader_parallel_download(session_id, urls, config, action, user_directory)
+
+            finally:
+                loop.close()
 
         except Exception as e:
             socketio.emit('uploader_error', {
@@ -1302,6 +1392,286 @@ def handle_uploader_video_action(session_id, action, uploader, config_file, outp
 
     # 在后台线程中运行
     threading.Thread(target=run_action, daemon=True).start()
+
+async def run_uploader_list_action(uploader, session_id, config):
+    """运行UP主列表操作"""
+    try:
+        from yutto_plus.core import UploaderVideoManager, parse_up_space_url
+
+        # 解析UP主UID
+        if uploader.startswith('http'):
+            uid = parse_up_space_url(uploader)
+        else:
+            uid = int(uploader)
+
+        # 创建UP主视频管理器
+        manager = UploaderVideoManager(
+            uid=uid,
+            output_dir=Path(config.get('output_dir', './Downloads')),
+            sessdata=config.get('sessdata')
+        )
+
+        # 获取视频列表
+        socketio.emit('uploader_progress', {
+            'action': 'list',
+            'line': f'🔍 正在获取UP主 {uid} 的投稿视频...'
+        }, room=session_id)
+
+        videos = await manager.get_uploader_videos()
+
+        # 发送视频列表信息
+        socketio.emit('uploader_progress', {
+            'action': 'list',
+            'line': f'📺 找到 {len(videos)} 个投稿视频'
+        }, room=session_id)
+
+        for i, video in enumerate(videos[:10], 1):  # 只显示前10个
+            socketio.emit('uploader_progress', {
+                'action': 'list',
+                'line': f'   {i}. {video["title"]} ({video["duration"]})'
+            }, room=session_id)
+
+        if len(videos) > 10:
+            socketio.emit('uploader_progress', {
+                'action': 'list',
+                'line': f'   ... 还有 {len(videos) - 10} 个视频'
+            }, room=session_id)
+
+        return True
+
+    except Exception as e:
+        socketio.emit('uploader_progress', {
+            'action': 'list',
+            'line': f'❌ 获取视频列表失败: {str(e)}'
+        }, room=session_id)
+        return False
+
+async def get_uploader_video_urls(uploader, session_id, config, is_update=False):
+    """获取UP主视频URL列表，并返回正确的用户目录"""
+    try:
+        from yutto_plus.core import UploaderVideoManager, parse_up_space_url
+
+        # 解析UP主UID
+        if uploader.startswith('http'):
+            uid = parse_up_space_url(uploader)
+        else:
+            uid = int(uploader)
+
+        # 创建UP主视频管理器
+        manager = UploaderVideoManager(
+            uid=uid,
+            output_dir=Path(config.get('output_dir', './Downloads')),
+            sessdata=config.get('sessdata')
+        )
+
+        # 获取视频列表
+        action_text = "更新" if is_update else "下载"
+        socketio.emit('uploader_progress', {
+            'action': 'download' if not is_update else 'update',
+            'line': f'🔍 正在获取UP主 {uid} 的投稿视频...'
+        }, room=session_id)
+
+        videos = await manager.get_uploader_videos(update_check=is_update)
+
+        if not videos:
+            socketio.emit('uploader_progress', {
+                'action': 'download' if not is_update else 'update',
+                'line': f'📺 没有找到需要{action_text}的视频'
+            }, room=session_id)
+            return [], None
+
+        # 获取用户专用目录
+        user_directory = await manager.get_user_directory()
+
+        # 发送总体信息
+        socketio.emit('uploader_progress', {
+            'action': 'download' if not is_update else 'update',
+            'line': f'📺 找到 {len(videos)} 个需要{action_text}的视频，开始下载...'
+        }, room=session_id)
+
+        # 返回URL列表和用户目录
+        urls = [video['url'] for video in videos]
+        return urls, str(user_directory)
+
+    except Exception as e:
+        socketio.emit('uploader_progress', {
+            'action': 'download' if not is_update else 'update',
+            'line': f'❌ 获取视频列表失败: {str(e)}'
+        }, room=session_id)
+        return [], None
+
+def start_uploader_parallel_download(session_id, urls, config, action, user_directory=None):
+    """启动UP主并行下载"""
+    try:
+        # 获取会话的下载器
+        if session_id not in active_downloads:
+            init_downloader(session_id)
+
+        downloader_instance = active_downloads[session_id]['downloader']
+
+        # 合并配置
+        merged_config = active_downloads[session_id]['config'].copy()
+        merged_config.update(config)
+
+        # 使用用户专用目录作为输出目录
+        if user_directory:
+            merged_config['output_dir'] = user_directory
+            print(f"📁 UP主下载目录: {user_directory}")
+
+        # 准备下载任务
+        tasks = []
+        for url in urls:
+            try:
+                clean_url, parts_selection = parse_url_with_parts(url)
+                task_config = {
+                    'quality': merged_config.get('quality', 80),
+                    'audio_quality': merged_config.get('audio_quality', 30280),
+                    'video_codec': merged_config.get('video_codec', 'avc'),
+                    'output_format': merged_config.get('format', 'mp4'),
+                    'output_dir': merged_config.get('output_dir', '~/Downloads/upper'),
+                    'overwrite': merged_config.get('overwrite', False),
+                    'enable_resume': merged_config.get('enable_resume', True),
+                    'episodes_selection': parts_selection,
+                    # 添加UP主下载的特殊配置
+                    'create_folder_for_multi_p': merged_config.get('create_folder_for_multi_p', True),
+                    'no_danmaku': merged_config.get('no_danmaku', False),
+                    'no_cover': merged_config.get('no_cover', False),
+                    'danmaku_format': merged_config.get('danmaku_format', 'ass'),
+                    'audio_format': merged_config.get('audio_format', 'mp3'),
+                    'audio_bitrate': merged_config.get('audio_bitrate', '192k')
+                }
+                tasks.append((clean_url, task_config))
+            except Exception as e:
+                print(f"⚠️ 跳过无效URL {url}: {e}")
+                continue
+
+        if not tasks:
+            socketio.emit('uploader_error', {
+                'message': '没有有效的下载链接'
+            }, room=session_id)
+            return
+
+        # 设置进度监控回调
+        def setup_progress_callbacks():
+            # 检查是否已经设置过回调，避免重复设置
+            if hasattr(downloader_instance, '_webui_callback_set'):
+                print(f"⚠️ 进度回调已设置，跳过重复设置")
+                return
+
+            # 重写下载器的进度回调方法
+            original_update_progress = downloader_instance._update_progress_display
+
+            def enhanced_update_progress():
+                try:
+                    # 调用原始方法
+                    original_update_progress()
+
+                    # 发送实时进度到前端
+                    overall_progress = downloader_instance.get_overall_progress()
+                    tasks_progress = downloader_instance.tasks_progress
+
+                    # 发送整体进度到所有连接的客户端
+                    socketio.emit('parallel_progress', {
+                        'source': f'uploader_{action}',  # 传递来源标识
+                        'overall': {
+                            'total_tasks': overall_progress.total_tasks,
+                            'completed_tasks': overall_progress.completed_tasks,
+                            'running_tasks': overall_progress.running_tasks,
+                            'failed_tasks': overall_progress.failed_tasks,
+                            'overall_progress': overall_progress.overall_progress,
+                            'total_speed': overall_progress.total_speed / (1024*1024),  # MB/s
+                            'eta_seconds': overall_progress.eta_seconds
+                        },
+                        'tasks': {
+                            task_id: {
+                                'status': progress.status.value,
+                                'title': format_task_title_with_multi_p(progress),
+                                'progress_percentage': progress.progress_percentage,
+                                'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0,
+                                'is_multi_p': progress.video_info.get('is_multi_p', False) if progress.video_info else False,
+                                'current_part': progress.video_info.get('current_part') if progress.video_info else None,
+                                'total_pages': progress.video_info.get('total_pages', 1) if progress.video_info else 1
+                            }
+                            for task_id, progress in tasks_progress.items()
+                        }
+                    })  # 广播到所有客户端
+
+                except Exception as e:
+                    print(f"❌ 进度回调出错: {e}")
+
+            # 替换方法
+            downloader_instance._update_progress_display = enhanced_update_progress
+            downloader_instance._webui_callback_set = True  # 标记已设置
+
+        # 添加任务到下载器
+        task_ids = downloader_instance.add_download_tasks(tasks)
+
+        # 保存任务信息到持久化存储
+        try:
+            for i, task_id in enumerate(task_ids):
+                # tasks[i] 是一个元组 (url, task_config)
+                url, task_config = tasks[i]
+                task_info = {
+                    'url': url,
+                    'title': '未知标题',  # 标题会在下载过程中获取
+                    'quality': merged_config.get('quality', 80),
+                    'parts': task_config.get('episodes_selection', ''),
+                    'created_at': time.time()
+                }
+                save_task_info(session_id, task_id, f'uploader_{action}', task_info)
+        except Exception as save_error:
+            print(f"⚠️ 保存任务信息时出错: {save_error}")
+            # 继续执行，不中断下载
+
+        # 设置回调
+        setup_progress_callbacks()
+
+        # 启动并行下载
+        downloader_instance.start_parallel_download(display_mode='silent')
+
+        # 保存任务到会话
+        active_downloads[session_id]['tasks'].update({tid: 'running' for tid in task_ids})
+        active_downloads[session_id]['source'] = f'uploader_{action}'  # 保存下载来源
+
+        # 发送开始确认
+        socketio.emit('parallel_download_started', {
+            'task_ids': task_ids,
+            'total_tasks': len(tasks),
+            'concurrent': merged_config.get('concurrent', 2),
+            'sessdata_configured': bool(merged_config.get('sessdata')),
+            'login_status': '已登录会员账户' if merged_config.get('sessdata') else '未登录，只能下载普通清晰度',
+            'source': f'uploader_{action}'  # 添加来源信息
+        }, room=session_id)
+
+        # 在后台监控完成状态
+        def monitor_completion():
+            while True:
+                time.sleep(2)
+                queue_status = downloader_instance.task_manager.get_queue_status()
+
+                if queue_status['running'] == 0 and queue_status['pending'] == 0:
+                    # 所有任务完成
+                    final_status = downloader_instance.task_manager.get_queue_status()
+                    tasks_info = downloader_instance.get_tasks_summary_info()
+
+                    socketio.emit('parallel_download_complete', {
+                        'final_status': final_status,
+                        'tasks_info': tasks_info,
+                        'session_id': session_id,
+                        'source': f'uploader_{action}'
+                    }, room=session_id)
+
+                    print(f'🎉 [完成] 会话 {session_id} UP主{action}下载完成')
+                    break
+
+        # 启动监控线程
+        threading.Thread(target=monitor_completion, daemon=True).start()
+
+    except Exception as e:
+        print(f'❌ [错误] 启动UP主{action}下载时出错: {e}')
+        socketio.emit('uploader_error', {
+            'message': f'启动{action}下载失败: {str(e)}'
+        }, room=session_id)
 
 def handle_uploader_scan_folders(session_id, config_file, output_dir):
     """扫描UP主文件夹"""
@@ -1625,6 +1995,11 @@ def handle_uploader_update_selected(session_id, data):
                         cwd=Path(__file__).parent.parent
                     )
 
+                    # 跟踪进程
+                    if session_id not in active_uploader_processes:
+                        active_uploader_processes[session_id] = []
+                    active_uploader_processes[session_id].append(process)
+
                     # 实时读取输出
                     while True:
                         line = process.stdout.readline()
@@ -1677,6 +2052,22 @@ def handle_uploader_update_selected(session_id, data):
     # 在后台线程中运行
     threading.Thread(target=run_update, daemon=True).start()
 
+def cleanup_all_processes():
+    """清理所有UP主相关进程"""
+    print("🧹 清理所有UP主相关进程...")
+
+    for session_id in list(active_uploader_processes.keys()):
+        cleanup_uploader_processes(session_id)
+
+    print("✅ 进程清理完成")
+
+def signal_handler(signum, frame):
+    """信号处理器"""
+    print(f"\n🛑 收到信号 {signum}，正在清理...")
+    cleanup_all_processes()
+    print("👋 WebUI 已退出")
+    sys.exit(0)
+
 def open_browser_delayed(url, delay=2):
     """延迟打开浏览器"""
     time.sleep(delay)
@@ -1684,7 +2075,12 @@ def open_browser_delayed(url, delay=2):
 
 if __name__ == '__main__':
     print("🚀 启动 YuttoPlus Web UI v2.0")
-    
+
+    # 注册信号处理器和退出清理
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    atexit.register(cleanup_all_processes)
+
     # 查找可用端口
     port = find_available_port()
     if not port:

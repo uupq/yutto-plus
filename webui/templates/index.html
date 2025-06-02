@@ -1198,6 +1198,12 @@
 
         // 连接状态管理
         socket.on('connect', function() {
+            console.log('🌐🌐🌐 [前端] WebSocket已连接 🌐🌐🌐');
+            console.log('🔍 [前端] Socket连接状态:', {
+                connected: socket.connected,
+                id: socket.id
+            });
+
             connectionStatus.textContent = '🟢 已连接';
             connectionStatus.className = 'connection-status connected';
             showAlert('WebSocket 连接成功', 'success');
@@ -1210,6 +1216,67 @@
                     checkActiveTasksForTab(currentTab);
                 }, 500);
             }
+        });
+
+        socket.on('disconnect', function() {
+            console.log('❌❌❌ [前端] WebSocket连接断开 ❌❌❌');
+        });
+
+        socket.on('connect_error', function(error) {
+            console.log('🚫🚫🚫 [前端] WebSocket连接错误 🚫🚫🚫:', error);
+        });
+
+        // 添加通用事件监听器来监控所有接收到的事件
+        socket.onAny(function(event, ...args) {
+            console.log(`📡📡📡 [前端] 收到事件: ${event} 📡📡📡`, args);
+            if (event === 'parallel_download_complete') {
+                console.log('🎯🎯🎯 [前端] 这是我们要找的事件！🎯🎯🎯');
+                alert(`🎯 收到关键事件: ${event}`);
+            }
+        });
+
+        // 监控按钮状态变化
+        function monitorButtonChanges() {
+            const btn = parallelDownloadBtn;
+            let lastDisabled = btn.disabled;
+            let lastTextContent = btn.textContent;
+
+            // 使用MutationObserver监控DOM变化
+            const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'disabled') {
+                        const newDisabled = btn.disabled;
+                        if (newDisabled !== lastDisabled) {
+                            console.log(`🔧🔧🔧 [按钮监控] disabled属性变化: ${lastDisabled} → ${newDisabled}`);
+                            alert(`🔧 按钮disabled变化: ${lastDisabled} → ${newDisabled}`);
+                            lastDisabled = newDisabled;
+                        }
+                    } else if (mutation.type === 'childList' || (mutation.type === 'characterData')) {
+                        const newTextContent = btn.textContent;
+                        if (newTextContent !== lastTextContent) {
+                            console.log(`📝📝📝 [按钮监控] textContent变化: "${lastTextContent}" → "${newTextContent}"`);
+                            alert(`📝 按钮文本变化: "${lastTextContent}" → "${newTextContent}"`);
+                            lastTextContent = newTextContent;
+                        }
+                    }
+                });
+            });
+
+            // 监控属性和子节点变化
+            observer.observe(btn, {
+                attributes: true,
+                attributeFilter: ['disabled'],
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+
+            console.log('👁️ 按钮变化监控已启动');
+        }
+
+        // 启动按钮监控
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(monitorButtonChanges, 1000);
         });
 
         // 获取当前激活的分栏
@@ -1276,8 +1343,22 @@
 
         // 检查指定分栏的活跃任务
         function checkActiveTasksForTab(tabName) {
-            console.log(`🔍 检查 ${tabName} 分栏的活跃任务`);
+            console.log(`🔍🔍🔍 [前端] 检查 ${tabName} 分栏的活跃任务 🔍🔍🔍`);
+            console.log(`🔍 [前端] 当前状态:`, {
+                activeDownload: activeDownload,
+                tabName: tabName,
+                parallelBtnDisabled: parallelDownloadBtn.disabled,
+                parallelBtnText: parallelDownloadBtn.textContent
+            });
 
+            // 检查是否刚刚完成下载，如果是则延迟检查
+            const recentlyCompletedKey = `recently_completed_${tabName}`;
+            if (window[recentlyCompletedKey]) {
+                console.log(`⏳ [前端] ${tabName} 分栏刚完成下载，跳过活跃任务检查`);
+                return;
+            }
+
+            console.log(`📤 [前端] 发送 check_active_tasks 请求: ${tabName}`);
             socket.emit('check_active_tasks', {
                 source: tabName  // 'single', 'parallel', 'precise'
             });
@@ -1333,14 +1414,29 @@
                 return;
             }
 
+            console.log('🔍 [前端] 并行下载表单提交检查:', {
+                activeDownload: activeDownload,
+                parallelBtnDisabled: parallelDownloadBtn.disabled,
+                parallelBtnText: parallelDownloadBtn.textContent
+            });
+
             if (activeDownload) {
+                console.log('🚫 [前端] 阻止并行下载：activeDownload =', activeDownload);
                 showAlert('有下载任务正在进行，请等待完成', 'error');
                 return;
             }
 
+            console.log('✅ [前端] 允许并行下载：activeDownload =', activeDownload);
             activeDownload = true;
+            console.log('🔄 [前端] 设置 activeDownload = true');
+
+            console.log('🔧 [前端] 表单提交 - 设置按钮为禁用状态');
             parallelDownloadBtn.disabled = true;
             parallelDownloadBtn.textContent = `📋 准备下载 ${urls.length} 个任务...`;
+            console.log('🔍 [前端] 表单提交后按钮状态:', {
+                disabled: parallelDownloadBtn.disabled,
+                textContent: parallelDownloadBtn.textContent
+            });
             parallelStatus.classList.remove('hidden');
             
             updateParallelProgress(0, `准备下载 ${urls.length} 个任务...`, '-');
@@ -1436,6 +1532,10 @@
                             const option = document.createElement('option');
                             option.value = config.filename;
                             option.textContent = `${config.name} (${config.description})`;
+                            // 默认选择yutto-webui.yaml
+                            if (config.filename === 'yutto-webui.yaml') {
+                                option.selected = true;
+                            }
                             uploaderConfigSelect.appendChild(option);
                         });
                     }
@@ -1683,45 +1783,132 @@
         });
 
         socket.on('parallel_download_started', function(data) {
+            const source = data.source || 'parallel';
             showAlert(`并行下载已启动: ${data.total_tasks} 个任务，并发数: ${data.concurrent}`, 'info');
-            
+
+            // 根据来源更新对应按钮状态
+            if (source === 'single') {
+                singleDownloadBtn.textContent = '下载中...';
+            } else if (source === 'parallel') {
+                console.log('🔧 [前端] parallel_download_started - 设置按钮文本为"下载中..."');
+                parallelDownloadBtn.textContent = '下载中...';
+                console.log('🔍 [前端] parallel_download_started后按钮状态:', {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+            } else if (source === 'precise') {
+                preciseDownloadBtn.textContent = '下载中...';
+            }
+
             // 显示登录状态
             if (data.sessdata_configured) {
                 showAlert(`✅ ${data.login_status}，可下载高清视频`, 'success');
             } else {
                 showAlert(`ℹ️ ${data.login_status}`, 'info');
             }
-            
+
             updateParallelProgress(0, '开始下载...', '-');
         });
 
         socket.on('parallel_download_complete', function(data) {
-            const final = data.final_status;
-            const source = data.source || 'parallel';
+            console.log('🎉🎉🎉 [前端] 收到下载完成事件 🎉🎉🎉');
+            console.log('📥 [前端] 事件数据:', data);
 
-            if (final.failed > 0 && final.completed === 0) {
-                showAlert(`下载失败! 失败: ${final.failed}`, 'error');
-            } else if (final.failed > 0) {
-                showAlert(`下载完成! 成功: ${final.completed}, 失败: ${final.failed}`, 'info');
-            } else {
-                showAlert(`下载完成! 成功下载 ${final.completed} 个视频`, 'success');
+            // 添加弹窗确认收到事件
+            alert('🎉 [前端调试] 收到 parallel_download_complete 事件！');
+
+            try {
+                console.log('🔍 [前端] 步骤1: 开始解析事件数据');
+                const final = data.final_status;
+                const source = data.source || 'parallel';
+                alert(`📊 步骤1完成: source=${source}, completed=${final.completed}`);
+
+                console.log('🔍 [前端] 步骤2: 当前按钮状态:', {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+                alert(`🔍 步骤2: 按钮状态 disabled=${parallelDownloadBtn.disabled}, text="${parallelDownloadBtn.textContent}"`);
+
+                console.log('🔍 [前端] 步骤3: 准备调用unlockDownloadInterface');
+                alert('🔍 步骤3: 准备调用unlockDownloadInterface');
+
+                unlockDownloadInterface(source);
+
+                alert('✅ 步骤4: unlockDownloadInterface调用完成');
+                console.log('🔍 [前端] 步骤4: unlockDownloadInterface调用完成，检查按钮状态:', {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+
+            } catch (error) {
+                console.error('❌ [前端] 事件处理出错:', error);
+                alert(`❌ 事件处理出错: ${error.message}`);
             }
 
-            // 根据来源解锁对应的界面
-            if (source === 'precise') {
-                updatePreciseProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
-            } else if (source === 'single') {
-                updateSingleProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
-            } else {
-                updateParallelProgress(100, `完成: ${final.completed}, 失败: ${final.failed}`, '-');
-            }
 
-            // 统一使用解锁函数（会自动清空和重置）
-            unlockDownloadInterface(source);
+
+
         });
+
+        // 解锁UP主界面
+        function unlockUploaderInterface() {
+            // 重置全局下载状态
+            activeDownload = false;
+
+            // 恢复UP主按钮状态
+            const downloadBtn = document.querySelector('#uploaderDownload .btn[onclick="uploaderDownload()"]');
+            const updateBtn = document.querySelector('#uploaderDownload .btn[onclick="uploaderUpdate()"]');
+            const listBtn = document.querySelector('#uploaderDownload .btn[onclick="uploaderList()"]');
+            const deleteBtn = document.querySelector('#uploaderDownload .btn[onclick="uploaderDelete()"]');
+
+            if (downloadBtn) {
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = '📥 下载视频';
+            }
+            if (updateBtn) {
+                updateBtn.disabled = false;
+                updateBtn.textContent = '🔄 更新视频列表';
+            }
+            if (listBtn) {
+                listBtn.disabled = false;
+                listBtn.textContent = '📋 列出视频';
+            }
+            if (deleteBtn) {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = '🗑️ 删除视频文件';
+            }
+
+            // 解锁输入框和配置选项
+            const uploaderInput = document.getElementById('uploaderInput');
+            const uploaderConfig = document.getElementById('uploaderConfig');
+            const uploaderOutputDir = document.getElementById('uploaderOutputDir');
+
+            if (uploaderInput) uploaderInput.disabled = false;
+            if (uploaderConfig) uploaderConfig.disabled = false;
+            if (uploaderOutputDir) uploaderOutputDir.disabled = false;
+
+            // 清空输入框
+            if (uploaderInput) uploaderInput.value = '';
+            if (uploaderOutputDir) uploaderOutputDir.value = '';
+
+            // 隐藏状态和信息区域，显示输入区域
+            document.getElementById('uploaderStatus').style.display = 'none';
+            document.getElementById('uploaderInfo').style.display = 'none';
+            document.getElementById('uploaderFolderSelection').style.display = 'none';
+            document.getElementById('uploaderVideoList').style.display = 'none';
+
+            // 清空状态和信息内容
+            document.getElementById('uploaderStatus').innerHTML = '';
+            document.getElementById('uploaderInfo').innerHTML = '';
+
+            console.log('🔓 UP主界面已解锁并重置');
+        }
 
         // 解锁精准下载界面
         function unlockPreciseDownloadInterface() {
+            // 重置全局下载状态
+            activeDownload = false;
+
             // 恢复按钮状态
             preciseDownloadBtn.disabled = false;
             preciseDownloadBtn.textContent = '🚀 开始精准下载';
@@ -1789,11 +1976,33 @@
 
                 // 更新精准任务列表
                 updatePreciseTaskList(tasks);
+            } else if (source.startsWith('uploader_')) {
+                // 这是UP主下载，更新UP主下载进度
+                // 计算基于视频数量的进度
+                const completedVideos = overall.completed_tasks + overall.failed_tasks;
+                const totalVideos = overall.total_tasks;
+                const videoProgress = totalVideos > 0 ? (completedVideos / totalVideos) * 100 : 0;
+
+                updateUploaderProgress(
+                    videoProgress,
+                    `${completedVideos}/${totalVideos} 视频完成`,
+                    `${overall.total_speed.toFixed(1)} MB/s`,
+                    source,
+                    overall
+                );
+
+                // 更新UP主任务列表
+                updateUploaderTaskList(tasks);
             } else {
-                // 这是普通并行下载，更新并行进度
+                // 这是普通并行下载，更新并行下载进度
+                // 计算基于任务数量的进度（类似UP主管理页面）
+                const completedTasks = overall.completed_tasks + overall.failed_tasks;
+                const totalTasks = overall.total_tasks;
+                const taskProgress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+
                 updateParallelProgress(
-                    overall.overall_progress,
-                    `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                    taskProgress,
+                    `${completedTasks}/${totalTasks} 任务完成`,
                     `${overall.total_speed.toFixed(1)} MB/s`
                 );
 
@@ -1811,15 +2020,24 @@
 
         // 处理活跃任务查询结果
         socket.on('active_tasks_result', function(data) {
-            console.log('📊 收到活跃任务查询结果:', data);
+            console.log('📊📊📊 [前端] 收到活跃任务查询结果 📊📊📊:', data);
 
             const source = data.source;
             const hasActiveTasks = data.has_active_tasks;
 
+            console.log(`🔍 [前端] 活跃任务查询结果:`, {
+                source: source,
+                hasActiveTasks: hasActiveTasks,
+                currentActiveDownload: activeDownload,
+                parallelBtnDisabled: parallelDownloadBtn.disabled,
+                parallelBtnText: parallelDownloadBtn.textContent
+            });
+
             if (hasActiveTasks) {
-                console.log(`✅ 发现 ${source} 分栏有活跃任务，恢复显示`);
+                console.log(`✅ [前端] 发现 ${source} 分栏有活跃任务，恢复显示`);
 
                 // 恢复对应分栏的下载状态
+                console.log(`🔄 [前端] 调用 restoreDownloadStateForSource(${source})`);
                 restoreDownloadStateForSource(source, data);
 
                 // 继续接收进度更新
@@ -1868,9 +2086,14 @@
                         updatePreciseTaskList(tasks);
                     } else {
                         // 这是普通并行下载，更新并行进度
+                        // 计算基于任务数量的进度（类似UP主管理页面）
+                        const completedTasks = overall.completed_tasks + overall.failed_tasks;
+                        const totalTasks = overall.total_tasks;
+                        const taskProgress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+
                         updateParallelProgress(
-                            overall.overall_progress,
-                            `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                            taskProgress,
+                            `${completedTasks}/${totalTasks} 任务完成`,
                             `${overall.total_speed.toFixed(1)} MB/s`
                         );
 
@@ -1879,13 +2102,94 @@
                     }
                 }
             } else {
-                console.log(`ℹ️ ${source} 分栏没有活跃任务`);
+                console.log(`ℹ️ ${source} 分栏没有活跃任务，重置界面状态`);
+
+                // 没有活跃任务，重置对应分栏的状态
+                resetTabState(source);
             }
         });
 
+        // 重置指定分栏的状态
+        function resetTabState(source) {
+            console.log(`🔄 重置 ${source} 分栏状态`);
+
+            // 重置全局下载状态
+            activeDownload = false;
+
+            if (source === 'single') {
+                // 重置单个下载界面
+                singleDownloadBtn.disabled = false;
+                singleDownloadBtn.textContent = '🚀 开始下载';
+                singleProgress.classList.add('hidden');
+
+                // 解锁输入框
+                document.getElementById('singleUrl').readOnly = false;
+                document.getElementById('singleUrl').style.backgroundColor = '';
+                document.getElementById('singleUrl').style.border = '';
+                document.getElementById('singleQuality').disabled = false;
+
+            } else if (source === 'parallel') {
+                // 重置并行下载界面
+                console.log('🔧 [前端] resetTabState - 重置并行下载按钮');
+                parallelDownloadBtn.disabled = false;
+                parallelDownloadBtn.textContent = '🚀 开始并行下载';
+                console.log('🔍 [前端] resetTabState后按钮状态:', {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+                parallelStatus.classList.add('hidden');
+
+                // 解锁输入框
+                document.getElementById('parallelUrls').readOnly = false;
+                document.getElementById('parallelUrls').style.backgroundColor = '';
+                document.getElementById('parallelUrls').style.border = '';
+                document.getElementById('parallelQuality').disabled = false;
+                document.getElementById('parallelAudioQuality').disabled = false;
+                document.getElementById('parallelConcurrent').disabled = false;
+
+                // 清空任务列表
+                const taskList = document.getElementById('taskList');
+                if (taskList) {
+                    taskList.innerHTML = '';
+                }
+
+            } else if (source === 'precise') {
+                // 重置精准下载界面
+                preciseDownloadBtn.disabled = false;
+                preciseDownloadBtn.textContent = '🚀 开始精准下载';
+                preciseProgress.style.display = 'none';
+
+                // 解锁配置选项
+                document.getElementById('preciseQuality').disabled = false;
+                document.getElementById('preciseAudioQuality').disabled = false;
+                document.getElementById('preciseConcurrent').disabled = false;
+
+                // 启用添加/删除按钮
+                const addBtn = document.querySelector('#preciseDownload .add-url-btn');
+                if (addBtn) addBtn.disabled = false;
+
+                const deleteButtons = document.querySelectorAll('#preciseDownload .delete-url-btn');
+                deleteButtons.forEach(btn => btn.disabled = false);
+
+                // 清空任务列表
+                const preciseTaskList = document.getElementById('preciseTaskList');
+                if (preciseTaskList) {
+                    preciseTaskList.innerHTML = '';
+                }
+            }
+        }
+
         // 恢复指定来源的下载状态
         function restoreDownloadStateForSource(source, data) {
+            console.log(`🔄🔄🔄 [前端] 恢复 ${source} 下载状态 🔄🔄🔄`);
+            console.log(`🔍 [前端] 恢复前状态:`, {
+                activeDownload: activeDownload,
+                parallelBtnDisabled: parallelDownloadBtn.disabled,
+                parallelBtnText: parallelDownloadBtn.textContent
+            });
+
             activeDownload = true;
+            console.log(`🔄 [前端] 设置 activeDownload = true`);
 
             if (source === 'single') {
                 singleDownloadBtn.disabled = true;
@@ -1903,14 +2207,30 @@
                     );
                 }
             } else if (source === 'parallel') {
+                console.log(`🔧 [前端] 恢复并行下载状态 - 设置按钮为禁用`);
+                console.log(`🔍 [前端] 设置前按钮状态:`, {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+
                 parallelDownloadBtn.disabled = true;
                 parallelDownloadBtn.textContent = '下载中...';
                 parallelStatus.classList.remove('hidden');
 
+                console.log(`🔍 [前端] 设置后按钮状态:`, {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+
                 if (data.overall) {
+                    // 计算基于任务数量的进度（类似UP主管理页面）
+                    const completedTasks = data.overall.completed_tasks + data.overall.failed_tasks;
+                    const totalTasks = data.overall.total_tasks;
+                    const taskProgress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+
                     updateParallelProgress(
-                        data.overall.overall_progress,
-                        `${data.overall.completed_tasks}/${data.overall.total_tasks} 完成`,
+                        taskProgress,
+                        `${completedTasks}/${totalTasks} 任务完成`,
                         `${data.overall.total_speed.toFixed(1)} MB/s`
                     );
                 }
@@ -1938,6 +2258,7 @@
 
         // 重置下载按钮状态
         function resetDownloadButtons() {
+            console.log('🔧 [前端] resetDownloadButtons - 重置所有下载按钮');
             activeDownload = false;
             singleDownloadBtn.disabled = false;
             singleDownloadBtn.textContent = '🚀 开始下载';
@@ -1945,6 +2266,10 @@
             parallelDownloadBtn.textContent = '🚀 开始并行下载';
             preciseDownloadBtn.disabled = false;
             preciseDownloadBtn.textContent = '🚀 开始精准下载';
+            console.log('🔍 [前端] resetDownloadButtons后按钮状态:', {
+                disabled: parallelDownloadBtn.disabled,
+                textContent: parallelDownloadBtn.textContent
+            });
 
             // 隐藏进度条（延迟3秒）
             setTimeout(() => {
@@ -1983,6 +2308,182 @@
             document.getElementById('preciseOverallProgress').style.width = `${percentage}%`;
             document.getElementById('preciseOverallText').textContent = progressText;
             document.getElementById('preciseOverallSpeed').textContent = speedText;
+        }
+
+        function updateUploaderProgress(percentage, progressText, speedText, source, overall = null) {
+            // 显示UP主下载进度在状态区域
+            const uploaderStatus = document.getElementById('uploaderStatus');
+            const uploaderInfo = document.getElementById('uploaderInfo');
+
+            if (uploaderStatus && uploaderInfo) {
+                // 隐藏其他区域，显示状态区域
+                document.getElementById('uploaderFolderSelection').style.display = 'none';
+                document.getElementById('uploaderVideoList').style.display = 'none';
+                uploaderStatus.style.display = 'block';
+                uploaderInfo.style.display = 'block';
+
+                // 更新状态信息
+                const actionText = source.includes('update') ? '更新' : '下载';
+
+                // 构建详细状态信息
+                let detailsHtml = '';
+                if (overall) {
+                    const runningTasks = overall.running_tasks;
+                    const completedTasks = overall.completed_tasks;
+                    const failedTasks = overall.failed_tasks;
+                    const totalTasks = overall.total_tasks;
+
+                    detailsHtml = `
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 15px; font-size: 13px;">
+                            <div style="text-align: center; padding: 8px; background: #e3f2fd; border-radius: 6px;">
+                                <div style="font-weight: 600; color: #1976d2;">📥 下载中</div>
+                                <div style="color: #1976d2; font-size: 16px; font-weight: bold;">${runningTasks}</div>
+                            </div>
+                            <div style="text-align: center; padding: 8px; background: #e8f5e8; border-radius: 6px;">
+                                <div style="font-weight: 600; color: #388e3c;">✅ 已完成</div>
+                                <div style="color: #388e3c; font-size: 16px; font-weight: bold;">${completedTasks}</div>
+                            </div>
+                            <div style="text-align: center; padding: 8px; background: #ffebee; border-radius: 6px;">
+                                <div style="font-weight: 600; color: #d32f2f;">❌ 失败</div>
+                                <div style="color: #d32f2f; font-size: 16px; font-weight: bold;">${failedTasks}</div>
+                            </div>
+                            <div style="text-align: center; padding: 8px; background: #f3e5f5; border-radius: 6px;">
+                                <div style="font-weight: 600; color: #7b1fa2;">📊 总计</div>
+                                <div style="color: #7b1fa2; font-size: 16px; font-weight: bold;">${totalTasks}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                uploaderStatus.innerHTML = `
+                    <h4 style="margin-bottom: 15px; color: #007bff;">📊 UP主${actionText}进度</h4>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                            <span style="font-weight: 600;">视频进度</span>
+                            <span style="color: #007bff; font-weight: 600;">${progressText}</span>
+                        </div>
+                        <div style="background: #e9ecef; border-radius: 10px; height: 20px; overflow: hidden; margin-bottom: 10px;">
+                            <div style="background: linear-gradient(90deg, #007bff, #0056b3); height: 100%; width: ${percentage}%; transition: width 0.3s ease;"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 14px; color: #666;">
+                            <span>下载速度: ${speedText}</span>
+                            <span>完成度: ${percentage.toFixed(1)}%</span>
+                        </div>
+                        ${detailsHtml}
+                    </div>
+                `;
+            }
+        }
+
+        function updateUploaderTaskList(tasks) {
+            // 在UP主信息区域显示任务列表
+            const uploaderInfo = document.getElementById('uploaderInfo');
+
+            if (uploaderInfo) {
+                // 创建或更新任务列表
+                let taskListContainer = uploaderInfo.querySelector('.uploader-task-list');
+                if (!taskListContainer) {
+                    taskListContainer = document.createElement('div');
+                    taskListContainer.className = 'uploader-task-list';
+                    taskListContainer.innerHTML = `
+                        <h5 style="margin: 20px 0 10px 0; color: #495057;">📋 下载任务列表</h5>
+                        <div class="uploader-tasks" style="max-height: 400px; overflow-y: auto;"></div>
+                    `;
+                    uploaderInfo.appendChild(taskListContainer);
+                }
+
+                const taskList = taskListContainer.querySelector('.uploader-tasks');
+
+                // 获取当前任务ID列表
+                const currentTaskIds = new Set(Object.keys(tasks));
+                const existingTaskIds = new Set(Array.from(taskList.children).map(item => item.getAttribute('data-task-id')));
+
+                // 移除不存在的任务
+                existingTaskIds.forEach(taskId => {
+                    if (!currentTaskIds.has(taskId)) {
+                        const item = taskList.querySelector(`[data-task-id="${taskId}"]`);
+                        if (item) item.remove();
+                    }
+                });
+
+                // 按状态排序任务
+                const sortedTasks = Object.entries(tasks).sort(([, a], [, b]) => {
+                    const statusPriority = {
+                        'downloading': 1,
+                        'merging': 2,
+                        'extracting': 3,
+                        'queued': 4,
+                        'pending': 5,
+                        'completed': 6,
+                        'failed': 7
+                    };
+                    return (statusPriority[a.status] || 5) - (statusPriority[b.status] || 5);
+                });
+
+                sortedTasks.forEach(([taskId, task]) => {
+                    let item = taskList.querySelector(`[data-task-id="${taskId}"]`);
+
+                    const statusClass = getStatusClass(task.status);
+                    const statusText = getStatusText(task.status);
+                    const statusIcon = getStatusIcon(task.status);
+
+                    // 格式化多P信息
+                    let multiPBadge = '';
+                    if (task.is_multi_p && task.current_part) {
+                        const currentPart = task.current_part.index;
+                        const totalParts = task.total_pages;
+                        multiPBadge = `<span class="multi-p-badge">📺 ${currentPart}/${totalParts}P</span>`;
+                    } else if (task.is_multi_p) {
+                        multiPBadge = `<span class="multi-p-badge">📺 ${task.total_pages}P</span>`;
+                    }
+
+                    if (!item) {
+                        // 创建新任务项
+                        item = document.createElement('div');
+                        item.className = 'task-item';
+                        item.setAttribute('data-task-id', taskId);
+                        item.style.cssText = `
+                            background: white;
+                            border: 1px solid #dee2e6;
+                            border-radius: 8px;
+                            padding: 15px;
+                            margin-bottom: 10px;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        `;
+                    }
+
+                    // 移除现有项（如果存在）以重新排序
+                    if (item.parentNode) {
+                        item.remove();
+                    }
+
+                    // 按排序顺序插入
+                    taskList.appendChild(item);
+
+                    // 更新任务内容
+                    item.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #495057; margin-bottom: 5px;">${task.title}</div>
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <span style="font-size: 12px; color: #6c757d;">${taskId}</span>
+                                    ${multiPBadge}
+                                    <span class="task-status ${statusClass}" style="font-size: 12px; padding: 2px 6px; border-radius: 4px;">
+                                        ${statusIcon} ${statusText}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="background: #e9ecef; border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 8px;">
+                            <div style="background: linear-gradient(90deg, #28a745, #20c997); height: 100%; width: ${task.progress_percentage}%; transition: width 0.3s ease;"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #6c757d;">
+                            <span>${task.progress_percentage.toFixed(1)}%</span>
+                            <span>⚡ ${task.download_speed.toFixed(1)} MB/s</span>
+                        </div>
+                    `;
+                });
+            }
         }
 
         function updatePreciseTaskList(tasks) {
@@ -2640,36 +3141,146 @@
 
         // 统一的下载界面解锁函数
         function unlockDownloadInterface(source) {
-            console.log(`🔓 解锁 ${source} 下载界面`);
+            console.log(`🔓🔓🔓 [前端] 开始解锁 ${source} 下载界面 🔓🔓🔓`);
+            console.log('🔍 [前端] 解锁前状态:', {
+                activeDownload: activeDownload,
+                parallelBtn: parallelDownloadBtn.textContent,
+                parallelDisabled: parallelDownloadBtn.disabled,
+                parallelBtnElement: parallelDownloadBtn
+            });
+
+            // 重置全局下载状态
+            console.log(`🔄 [前端] 设置 activeDownload = false (之前: ${activeDownload})`);
+            activeDownload = false;
 
             if (source === 'single') {
                 // 解锁单个下载界面
-                document.getElementById('singleUrl').readOnly = false;
-                document.getElementById('singleUrl').style.backgroundColor = '';
-                document.getElementById('singleUrl').style.border = '';
-                document.getElementById('singleUrl').value = '';  // 清空
+                const singleUrl = document.getElementById('singleUrl');
+                if (singleUrl) {
+                    singleUrl.readOnly = false;
+                    singleUrl.style.backgroundColor = '';
+                    singleUrl.style.border = '';
+                    singleUrl.value = '';  // 清空
+                } else {
+                    console.warn('⚠️ singleUrl 元素未找到');
+                }
 
-                document.getElementById('singleQuality').disabled = false;
-                singleDownloadBtn.disabled = false;
-                singleDownloadBtn.textContent = '🚀 开始下载';
+                const singleQuality = document.getElementById('singleQuality');
+                if (singleQuality) {
+                    singleQuality.disabled = false;
+                } else {
+                    console.warn('⚠️ singleQuality 元素未找到');
+                }
+
+                if (singleDownloadBtn) {
+                    singleDownloadBtn.disabled = false;
+                    singleDownloadBtn.textContent = '🚀 开始下载';
+                } else {
+                    console.warn('⚠️ singleDownloadBtn 元素未找到');
+                }
 
                 // 延迟隐藏进度区域
                 setTimeout(() => {
-                    singleProgress.classList.add('hidden');
+                    if (singleProgress) {
+                        singleProgress.classList.add('hidden');
+                    }
                 }, 3000);
 
             } else if (source === 'parallel') {
                 // 解锁并行下载界面
-                document.getElementById('parallelUrls').readOnly = false;
-                document.getElementById('parallelUrls').style.backgroundColor = '';
-                document.getElementById('parallelUrls').style.border = '';
-                document.getElementById('parallelUrls').value = '';  // 清空
+                console.log('🔄 [前端] 开始解锁并行下载界面');
+                console.log('🔍 [前端] 解锁前状态:', {
+                    activeDownload: activeDownload,
+                    parallelBtnDisabled: parallelDownloadBtn.disabled,
+                    parallelBtnText: parallelDownloadBtn.textContent,
+                    parallelBtnElement: parallelDownloadBtn
+                });
 
-                document.getElementById('parallelQuality').disabled = false;
-                document.getElementById('parallelAudioQuality').disabled = false;
-                document.getElementById('parallelConcurrent').disabled = false;
+                console.log('🔧 [前端] 开始修改DOM元素...');
+
+                const parallelUrls = document.getElementById('parallelUrls');
+                if (parallelUrls) {
+                    parallelUrls.readOnly = false;
+                    parallelUrls.style.backgroundColor = '';
+                    parallelUrls.style.border = '';
+                    parallelUrls.value = '';  // 清空
+                } else {
+                    console.warn('⚠️ parallelUrls 元素未找到');
+                }
+
+                const parallelQuality = document.getElementById('parallelQuality');
+                if (parallelQuality) {
+                    parallelQuality.disabled = false;
+                } else {
+                    console.warn('⚠️ parallelQuality 元素未找到');
+                }
+
+                const parallelAudioQuality = document.getElementById('parallelAudioQuality');
+                if (parallelAudioQuality) {
+                    parallelAudioQuality.disabled = false;
+                } else {
+                    console.warn('⚠️ parallelAudioQuality 元素未找到');
+                }
+
+                const parallelConcurrent = document.getElementById('parallelConcurrent');
+                if (parallelConcurrent) {
+                    parallelConcurrent.disabled = false;
+                } else {
+                    console.warn('⚠️ parallelConcurrent 元素未找到');
+                }
+
+                console.log('🔧 [前端] 准备修改按钮状态...');
+                console.log('🔍 [前端] 修改前按钮状态:', {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+
                 parallelDownloadBtn.disabled = false;
                 parallelDownloadBtn.textContent = '🚀 开始并行下载';
+
+                console.log('🔍 [前端] 修改后按钮状态:', {
+                    disabled: parallelDownloadBtn.disabled,
+                    textContent: parallelDownloadBtn.textContent
+                });
+
+                console.log('🔍 解锁后状态:', {
+                    parallelBtn: parallelDownloadBtn.textContent,
+                    parallelDisabled: parallelDownloadBtn.disabled,
+                    activeDownload: activeDownload
+                });
+
+                // 强制检查并修复按钮状态
+                setTimeout(() => {
+                    console.log('🔍 [前端] 强制检查按钮状态 (100ms后):', {
+                        disabled: parallelDownloadBtn.disabled,
+                        textContent: parallelDownloadBtn.textContent,
+                        expected: '🚀 开始并行下载'
+                    });
+
+                    if (parallelDownloadBtn.disabled || parallelDownloadBtn.textContent !== '🚀 开始并行下载') {
+                        console.log('⚠️ [前端] 检测到按钮状态异常，强制修复');
+                        console.log('🔧 [前端] 异常状态:', {
+                            disabled: parallelDownloadBtn.disabled,
+                            textContent: parallelDownloadBtn.textContent
+                        });
+
+                        parallelDownloadBtn.disabled = false;
+                        parallelDownloadBtn.textContent = '🚀 开始并行下载';
+
+                        console.log('✅ [前端] 按钮状态已强制修复:', {
+                            disabled: parallelDownloadBtn.disabled,
+                            textContent: parallelDownloadBtn.textContent
+                        });
+                    } else {
+                        console.log('✅ [前端] 按钮状态正常，无需修复');
+                    }
+                }, 100);
+
+                // 清空任务列表
+                const taskList = document.getElementById('taskList');
+                if (taskList) {
+                    taskList.innerHTML = '';
+                }
 
                 // 延迟隐藏进度区域
                 setTimeout(() => {
