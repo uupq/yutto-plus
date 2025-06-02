@@ -1067,7 +1067,28 @@
             connectionStatus.className = 'connection-status connected';
             showAlert('WebSocket 连接成功', 'success');
             loadConfigs();
+
+            // 检查当前分栏是否有活跃任务
+            const currentTab = getCurrentActiveTab();
+            if (currentTab) {
+                setTimeout(() => {
+                    checkActiveTasksForTab(currentTab);
+                }, 500);
+            }
         });
+
+        // 获取当前激活的分栏
+        function getCurrentActiveTab() {
+            const activeTab = document.querySelector('.tab.active');
+            if (activeTab) {
+                const onclick = activeTab.getAttribute('onclick');
+                if (onclick) {
+                    const match = onclick.match(/switchTab\('(.+?)'\)/);
+                    return match ? match[1] : 'single';
+                }
+            }
+            return 'single';  // 默认为单个下载
+        }
 
         socket.on('disconnect', function() {
             connectionStatus.textContent = '🔴 连接断开';
@@ -1089,6 +1110,18 @@
             if (tabName === 'precise' && preciseUrlList.children.length === 0) {
                 addPreciseUrl();
             }
+
+            // 检查当前分栏是否有活跃任务
+            checkActiveTasksForTab(tabName);
+        }
+
+        // 检查指定分栏的活跃任务
+        function checkActiveTasksForTab(tabName) {
+            console.log(`🔍 检查 ${tabName} 分栏的活跃任务`);
+
+            socket.emit('check_active_tasks', {
+                source: tabName  // 'single', 'parallel', 'precise'
+            });
         }
 
         // 单个下载
@@ -1510,13 +1543,19 @@
         });
 
         socket.on('parallel_progress', function(data) {
+            console.log('📊 收到进度更新:', {
+                source: data.source,
+                taskCount: Object.keys(data.tasks).length,
+                overallProgress: data.overall.overall_progress
+            });
+
             const overall = data.overall;
             const tasks = data.tasks;
-            const source = data.source || 'parallel';  // 获取来源标识
+            const source = data.source || 'parallel';
 
             // 检查是否是单个下载（只有一个任务）
             const taskIds = Object.keys(tasks);
-            if (taskIds.length === 1 && document.getElementById('singleTab').classList.contains('active')) {
+            if (taskIds.length === 1 && source === 'single') {
                 // 这是单个下载，更新单个下载进度
                 const taskId = taskIds[0];
                 const task = tasks[taskId];
@@ -1559,10 +1598,137 @@
 
         socket.on('error', function(data) {
             showAlert(data.message, 'error');
-            
+
             // 重置按钮状态
             resetDownloadButtons();
         });
+
+        // 处理活跃任务查询结果
+        socket.on('active_tasks_result', function(data) {
+            console.log('📊 收到活跃任务查询结果:', data);
+
+            const source = data.source;
+            const hasActiveTasks = data.has_active_tasks;
+
+            if (hasActiveTasks) {
+                console.log(`✅ 发现 ${source} 分栏有活跃任务，恢复显示`);
+
+                // 恢复对应分栏的下载状态
+                restoreDownloadStateForSource(source, data);
+
+                // 继续接收进度更新
+                if (data.overall && data.tasks) {
+                    // 模拟parallel_progress事件来更新进度显示
+                    const progressData = {
+                        source: source,
+                        overall: data.overall,
+                        tasks: data.tasks
+                    };
+
+                    // 触发parallel_progress事件处理逻辑
+                    const overall = progressData.overall;
+                    const tasks = progressData.tasks;
+                    const source_type = progressData.source || 'parallel';
+
+                    // 检查是否是单个下载（只有一个任务）
+                    const taskIds = Object.keys(tasks);
+                    if (taskIds.length === 1 && source_type === 'single') {
+                        // 这是单个下载，更新单个下载进度
+                        const taskId = taskIds[0];
+                        const task = tasks[taskId];
+
+                        // 格式化状态文本，包含多P信息
+                        let statusText = `${task.title} - ${getStatusText(task.status)}`;
+                        if (task.is_multi_p && task.current_part) {
+                            const currentPart = task.current_part.index;
+                            const totalParts = task.total_pages;
+                            statusText += ` (分P: ${currentPart}/${totalParts})`;
+                        }
+
+                        updateSingleProgress(
+                            task.progress_percentage,
+                            statusText,
+                            `${task.download_speed.toFixed(1)} MB/s`
+                        );
+                    } else if (source_type === 'precise') {
+                        // 这是精准并行下载，更新精准下载进度
+                        updatePreciseProgress(
+                            overall.overall_progress,
+                            `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                            `${overall.total_speed.toFixed(1)} MB/s`
+                        );
+
+                        // 更新精准任务列表
+                        updatePreciseTaskList(tasks);
+                    } else {
+                        // 这是普通并行下载，更新并行进度
+                        updateParallelProgress(
+                            overall.overall_progress,
+                            `${overall.completed_tasks}/${overall.total_tasks} 完成`,
+                            `${overall.total_speed.toFixed(1)} MB/s`
+                        );
+
+                        // 更新任务列表
+                        updateTaskList(tasks);
+                    }
+                }
+            } else {
+                console.log(`ℹ️ ${source} 分栏没有活跃任务`);
+            }
+        });
+
+        // 恢复指定来源的下载状态
+        function restoreDownloadStateForSource(source, data) {
+            activeDownload = true;
+
+            if (source === 'single') {
+                singleDownloadBtn.disabled = true;
+                singleDownloadBtn.textContent = '下载中...';
+                singleProgress.classList.remove('hidden');
+
+                // 如果有任务数据，显示第一个任务的信息
+                const taskIds = Object.keys(data.tasks);
+                if (taskIds.length > 0) {
+                    const task = data.tasks[taskIds[0]];
+                    updateSingleProgress(
+                        task.progress_percentage,
+                        task.title,
+                        `${task.download_speed.toFixed(1)} MB/s`
+                    );
+                }
+            } else if (source === 'parallel') {
+                parallelDownloadBtn.disabled = true;
+                parallelDownloadBtn.textContent = '下载中...';
+                parallelStatus.classList.remove('hidden');
+
+                if (data.overall) {
+                    updateParallelProgress(
+                        data.overall.overall_progress,
+                        `${data.overall.completed_tasks}/${data.overall.total_tasks} 完成`,
+                        `${data.overall.total_speed.toFixed(1)} MB/s`
+                    );
+                }
+            } else if (source === 'precise') {
+                preciseDownloadBtn.disabled = true;
+                preciseDownloadBtn.textContent = '下载中...';
+                preciseProgress.style.display = 'block';
+
+                if (data.overall) {
+                    updatePreciseProgress(
+                        data.overall.overall_progress,
+                        `${data.overall.completed_tasks}/${data.overall.total_tasks} 完成`,
+                        `${data.overall.total_speed.toFixed(1)} MB/s`
+                    );
+                }
+
+                // 更新精准任务列表
+                if (data.tasks) {
+                    updatePreciseTaskList(data.tasks);
+                }
+            }
+
+            console.log(`🔄 已恢复 ${source} 分栏的下载状态`);
+        }
 
         // 重置下载按钮状态
         function resetDownloadButtons() {

@@ -33,6 +33,48 @@ downloader = None
 config_manager = ConfigManager()
 active_downloads = {}  # {session_id: {downloader, tasks}}
 
+# 全局下载器和任务管理
+global_downloader = None
+global_config = None
+
+# 任务持久化存储 - 改为全局存储
+persistent_tasks = {}  # {task_id: {source, task_info, status, session_id}}
+
+def save_task_info(session_id: str, task_id: str, source: str, task_info: dict):
+    """保存任务信息到全局持久化存储"""
+    persistent_tasks[task_id] = {
+        'source': source,  # 'single', 'parallel', 'precise'
+        'task_info': task_info,
+        'created_at': time.time(),
+        'status': 'active',
+        'session_id': session_id
+    }
+    print(f"💾 保存任务信息: {task_id} (来源: {source})")
+
+def get_active_tasks_by_source(source: str):
+    """获取指定来源的所有活跃任务"""
+    active_tasks = {}
+    for task_id, task_data in persistent_tasks.items():
+        if task_data['source'] == source and task_data['status'] == 'active':
+            active_tasks[task_id] = task_data
+
+    return active_tasks
+
+def mark_task_completed(task_id: str):
+    """标记任务为已完成"""
+    if task_id in persistent_tasks:
+        persistent_tasks[task_id]['status'] = 'completed'
+        print(f"✅ 标记任务完成: {task_id}")
+
+def cleanup_completed_tasks():
+    """清理已完成的任务"""
+    completed_tasks = [task_id for task_id, task_data in persistent_tasks.items()
+                      if task_data['status'] == 'completed']
+    for task_id in completed_tasks:
+        del persistent_tasks[task_id]
+    if completed_tasks:
+        print(f"🗑️ 清理已完成任务: {len(completed_tasks)} 个")
+
 def parse_url_with_parts(url_string: str):
     """
     解析URL字符串，提取URL和分P参数
@@ -177,14 +219,31 @@ def validate_sessdata(sessdata):
         return False, f"验证错误: {str(e)}"
 
 def init_downloader(session_id, config=None):
-    """为每个会话初始化独立的下载器"""
+    """初始化下载器实例，支持全局复用"""
+    global global_downloader, global_config
+
     if config is None:
         # 默认加载WebUI配置文件
         webui_config_path = ensure_webui_config()
         with open(webui_config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
-    
-    # 使用配置文件参数
+
+    # 如果全局下载器已存在且配置相同，直接复用
+    if global_downloader is not None and global_config == config:
+        print(f'🔄 复用现有下载器实例 (会话: {session_id})')
+        active_downloads[session_id] = {
+            'downloader': global_downloader,
+            'tasks': {},
+            'config': config
+        }
+
+        # 确保WebUI回调已设置
+        if not hasattr(global_downloader, '_webui_callback_set'):
+            print(f"⚠️ 复用的下载器缺少WebUI回调，需要重新设置")
+
+        return global_downloader
+
+    # 创建新的下载器实例
     downloader_instance = YuttoPlus(
         max_concurrent=config.get('concurrent', 2),
         default_output_dir=config.get('output_dir', './Downloads'),
@@ -196,13 +255,20 @@ def init_downloader(session_id, config=None):
         enable_resume=config.get('enable_resume', True),
         sessdata=config.get('sessdata')
     )
-    
+
+    # 保存为全局下载器
+    global_downloader = downloader_instance
+    global_config = config
+
     active_downloads[session_id] = {
         'downloader': downloader_instance,
         'tasks': {},
-        'config': config or {}
+        'config': config
     }
-    
+
+    print(f'🚀 YuttoPlus 已初始化 (会话: {session_id}, 并发数: {config.get("concurrent", 2)})')
+    print(f'📁 输出目录: {config.get("output_dir", "./Downloads")}')
+
     return downloader_instance
 
 @app.route('/')
@@ -460,15 +526,13 @@ def handle_disconnect():
     """客户端断开连接"""
     session_id = request.sid
     print(f'🔌 [断开] 客户端已断开: {session_id}')
-    
-    # 清理会话数据
+
+    # 只清理会话数据，不关闭下载器
     if session_id in active_downloads:
-        # 关闭下载器
-        try:
-            active_downloads[session_id]['downloader'].shutdown()
-        except:
-            pass
+        print(f'📋 清理会话数据: {session_id}')
         del active_downloads[session_id]
+
+    # 不清理任务数据，保持任务持久化
 
 @socketio.on('load_config')
 def handle_load_config(data):
@@ -587,57 +651,92 @@ def handle_parallel_download_request(data):
         
         # 设置进度监控回调
         def setup_progress_callbacks():
+            # 检查是否已经设置过回调，避免重复设置
+            if hasattr(downloader_instance, '_webui_callback_set'):
+                print(f"⚠️ 进度回调已设置，跳过重复设置")
+                return
+
             # 重写下载器的进度回调方法
             original_update_progress = downloader_instance._update_progress_display
-            
+
             def enhanced_update_progress():
-                # 调用原始方法
-                original_update_progress()
-                
-                # 发送实时进度到前端
-                overall_progress = downloader_instance.get_overall_progress()
-                tasks_progress = downloader_instance.tasks_progress
-                
-                # 发送整体进度
-                socketio.emit('parallel_progress', {
-                    'source': source,  # 传递来源标识
-                    'overall': {
-                        'total_tasks': overall_progress.total_tasks,
-                        'completed_tasks': overall_progress.completed_tasks,
-                        'running_tasks': overall_progress.running_tasks,
-                        'failed_tasks': overall_progress.failed_tasks,
-                        'overall_progress': overall_progress.overall_progress,
-                        'total_speed': overall_progress.total_speed / (1024*1024),  # MB/s
-                        'eta_seconds': overall_progress.eta_seconds
-                    },
-                    'tasks': {
-                        task_id: {
-                            'status': progress.status.value,
-                            'title': format_task_title_with_multi_p(progress),
-                            'progress_percentage': progress.progress_percentage,
-                            'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0,
-                            'is_multi_p': progress.video_info.get('is_multi_p', False) if progress.video_info else False,
-                            'current_part': progress.video_info.get('current_part') if progress.video_info else None,
-                            'total_pages': progress.video_info.get('total_pages', 1) if progress.video_info else 1
+                try:
+                    # 调用原始方法
+                    original_update_progress()
+
+                    # 发送实时进度到前端
+                    overall_progress = downloader_instance.get_overall_progress()
+                    tasks_progress = downloader_instance.tasks_progress
+
+                    print(f"📊 发送进度更新: 总任务={overall_progress.total_tasks}, 运行中={overall_progress.running_tasks}, 进度={overall_progress.overall_progress:.1f}%")
+
+                    # 发送整体进度到所有连接的客户端
+                    socketio.emit('parallel_progress', {
+                        'source': source,  # 传递来源标识
+                        'overall': {
+                            'total_tasks': overall_progress.total_tasks,
+                            'completed_tasks': overall_progress.completed_tasks,
+                            'running_tasks': overall_progress.running_tasks,
+                            'failed_tasks': overall_progress.failed_tasks,
+                            'overall_progress': overall_progress.overall_progress,
+                            'total_speed': overall_progress.total_speed / (1024*1024),  # MB/s
+                            'eta_seconds': overall_progress.eta_seconds
+                        },
+                        'tasks': {
+                            task_id: {
+                                'status': progress.status.value,
+                                'title': format_task_title_with_multi_p(progress),
+                                'progress_percentage': progress.progress_percentage,
+                                'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0,
+                                'is_multi_p': progress.video_info.get('is_multi_p', False) if progress.video_info else False,
+                                'current_part': progress.video_info.get('current_part') if progress.video_info else None,
+                                'total_pages': progress.video_info.get('total_pages', 1) if progress.video_info else 1
+                            }
+                            for task_id, progress in tasks_progress.items()
                         }
-                        for task_id, progress in tasks_progress.items()
-                    }
-                }, room=session_id)
-            
+                    })  # 广播到所有客户端
+
+                except Exception as e:
+                    print(f"❌ 进度回调出错: {e}")
+
             # 替换方法
             downloader_instance._update_progress_display = enhanced_update_progress
+            downloader_instance._webui_callback_set = True  # 标记已设置
+            print(f"✅ 已设置WebUI进度回调")
         
         # 添加任务到下载器
         task_ids = downloader_instance.add_download_tasks(tasks)
-        
+
+        # 保存任务信息到持久化存储
+        try:
+            for i, task_id in enumerate(task_ids):
+                # tasks[i] 是一个元组 (url, task_config)
+                url, task_config = tasks[i]
+                task_info = {
+                    'url': url,
+                    'title': '未知标题',  # 标题会在下载过程中获取
+                    'quality': merged_config.get('quality', 80),
+                    'parts': task_config.get('episodes_selection', ''),
+                    'created_at': time.time()
+                }
+                save_task_info(session_id, task_id, source, task_info)
+                print(f"💾 已保存任务信息: {task_id} -> {url}")
+        except Exception as save_error:
+            print(f"⚠️ 保存任务信息时出错: {save_error}")
+            print(f"🔍 调试信息: tasks类型={type(tasks)}, 长度={len(tasks)}")
+            if tasks:
+                print(f"🔍 第一个任务: {tasks[0]}")
+            # 继续执行，不中断下载
+
         # 设置回调
         setup_progress_callbacks()
-        
+
         # 启动并行下载
         downloader_instance.start_parallel_download(display_mode='silent')
-        
+
         # 保存任务到会话
         active_downloads[session_id]['tasks'].update({tid: 'running' for tid in task_ids})
+        active_downloads[session_id]['source'] = source  # 保存下载来源
         
         # 发送开始确认
         emit('parallel_download_started', {
@@ -699,29 +798,141 @@ def handle_single_download_request(data):
         print(f'❌ [错误] 处理单个下载请求时出错: {e}')
         emit('error', {'message': f'处理单个下载请求时出错: {str(e)}'})
 
-@socketio.on('get_session_status')
-def handle_get_session_status():
-    """获取会话状态"""
+@socketio.on('check_active_tasks')
+def handle_check_active_tasks(data):
+    """检查指定来源的活跃任务"""
     session_id = request.sid
-    
-    if session_id in active_downloads:
-        downloader_instance = active_downloads[session_id]['downloader']
-        config = active_downloads[session_id]['config']
-        
-        queue_status = downloader_instance.task_manager.get_queue_status()
-        overall_progress = downloader_instance.get_overall_progress()
-        
-        emit('session_status', {
-            'config_loaded': bool(config),
-            'config_description': config.get('description', '默认配置'),
-            'queue_status': queue_status,
-            'overall_progress': {
-                'total_tasks': overall_progress.total_tasks,
-                'completed_tasks': overall_progress.completed_tasks,
-                'running_tasks': overall_progress.running_tasks,
-                'failed_tasks': overall_progress.failed_tasks,
-                'overall_progress': overall_progress.overall_progress
-            }
+    source = data.get('source', 'single')  # 'single', 'parallel', 'precise'
+
+    print(f"🔍 检查活跃任务: 会话={session_id}, 来源={source}")
+
+    # 获取指定来源的活跃任务
+    active_tasks = get_active_tasks_by_source(source)
+
+    if not active_tasks:
+        print(f"ℹ️ 没有找到来源为 {source} 的活跃任务")
+        emit('active_tasks_result', {
+            'source': source,
+            'has_active_tasks': False,
+            'tasks': {}
+        })
+        return
+
+    # 检查这些任务是否还在运行
+    if global_downloader is not None:
+        try:
+            # 获取当前进度
+            overall_progress = global_downloader.get_overall_progress()
+            tasks_progress = global_downloader.tasks_progress
+
+            # 过滤出仍在运行的任务
+            running_tasks = {}
+            for task_id in active_tasks.keys():
+                if task_id in tasks_progress:
+                    progress = tasks_progress[task_id]
+                    running_tasks[task_id] = {
+                        'status': progress.status.value,
+                        'title': format_task_title_with_multi_p(progress),
+                        'progress_percentage': progress.progress_percentage,
+                        'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0,
+                        'is_multi_p': progress.video_info.get('is_multi_p', False) if progress.video_info else False,
+                        'current_part': progress.video_info.get('current_part') if progress.video_info else None,
+                        'total_pages': progress.video_info.get('total_pages', 1) if progress.video_info else 1,
+                        'task_info': active_tasks[task_id]['task_info']
+                    }
+
+            if running_tasks:
+                print(f"✅ 找到 {len(running_tasks)} 个运行中的 {source} 任务")
+
+                # 发送任务信息和当前进度
+                emit('active_tasks_result', {
+                    'source': source,
+                    'has_active_tasks': True,
+                    'overall': {
+                        'total_tasks': overall_progress.total_tasks,
+                        'completed_tasks': overall_progress.completed_tasks,
+                        'running_tasks': overall_progress.running_tasks,
+                        'failed_tasks': overall_progress.failed_tasks,
+                        'overall_progress': overall_progress.overall_progress,
+                        'total_speed': overall_progress.total_speed / (1024*1024),
+                        'eta_seconds': overall_progress.eta_seconds
+                    },
+                    'tasks': running_tasks
+                })
+
+                # 启动定期进度更新（为刷新后的客户端）
+                def send_periodic_updates():
+                    import time
+                    for _ in range(30):  # 最多30次，每次2秒，总共1分钟
+                        time.sleep(2)
+                        try:
+                            if global_downloader is not None:
+                                current_progress = global_downloader.get_overall_progress()
+                                current_tasks = global_downloader.tasks_progress
+
+                                # 检查是否还有运行中的任务
+                                if current_progress.running_tasks == 0:
+                                    break
+
+                                # 发送进度更新
+                                socketio.emit('parallel_progress', {
+                                    'source': source,
+                                    'overall': {
+                                        'total_tasks': current_progress.total_tasks,
+                                        'completed_tasks': current_progress.completed_tasks,
+                                        'running_tasks': current_progress.running_tasks,
+                                        'failed_tasks': current_progress.failed_tasks,
+                                        'overall_progress': current_progress.overall_progress,
+                                        'total_speed': current_progress.total_speed / (1024*1024),
+                                        'eta_seconds': current_progress.eta_seconds
+                                    },
+                                    'tasks': {
+                                        task_id: {
+                                            'status': progress.status.value,
+                                            'title': format_task_title_with_multi_p(progress),
+                                            'progress_percentage': progress.progress_percentage,
+                                            'download_speed': progress.download_speed / (1024*1024) if progress.download_speed else 0,
+                                            'is_multi_p': progress.video_info.get('is_multi_p', False) if progress.video_info else False,
+                                            'current_part': progress.video_info.get('current_part') if progress.video_info else None,
+                                            'total_pages': progress.video_info.get('total_pages', 1) if progress.video_info else 1
+                                        }
+                                        for task_id, progress in current_tasks.items()
+                                        if task_id in running_tasks  # 只发送相关任务
+                                    }
+                                })
+                        except Exception as e:
+                            print(f"❌ 定期进度更新出错: {e}")
+                            break
+
+                # 在后台线程中启动定期更新
+                threading.Thread(target=send_periodic_updates, daemon=True).start()
+                print(f"🔄 已启动定期进度更新线程")
+            else:
+                print(f"ℹ️ {source} 任务已完成或不再运行")
+                # 标记任务为已完成
+                for task_id in active_tasks.keys():
+                    mark_task_completed(session_id, task_id)
+
+                emit('active_tasks_result', {
+                    'source': source,
+                    'has_active_tasks': False,
+                    'tasks': {}
+                })
+
+        except Exception as e:
+            print(f"❌ 检查任务状态失败: {e}")
+            emit('active_tasks_result', {
+                'source': source,
+                'has_active_tasks': False,
+                'tasks': {},
+                'error': str(e)
+            })
+    else:
+        print(f"ℹ️ 没有全局下载器实例")
+        emit('active_tasks_result', {
+            'source': source,
+            'has_active_tasks': False,
+            'tasks': {}
         })
 
 def find_available_port():
