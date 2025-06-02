@@ -1011,8 +1011,8 @@
 
                     <div class="form-group full-width">
                         <label for="editEpisodesSelection">📺 分P选择 (可选)</label>
-                        <input type="text" id="editEpisodesSelection" placeholder="例如: 1,3,5-8 或 ~3,1~5,-2~ (留空下载全部)">
-                        <small style="color: #666;">支持范围选择和排除语法，详见文档</small>
+                        <input type="text" id="editEpisodesSelection" placeholder="例如: 1,3,5~8 或 ~3,3~,-2~,~-2 (留空下载全部)">
+                        <small style="color: #666;">语法: 1,3,5(指定) | 1~5(范围) | ~3(前3个) | 3~(从3开始) | -2~(后2个) | ~-2(除了最后2个) | ~(全部)</small>
                     </div>
                 </div>
                 
@@ -1094,6 +1094,12 @@
             connectionStatus.textContent = '🔴 连接断开';
             connectionStatus.className = 'connection-status disconnected';
             showAlert('WebSocket 连接断开', 'error');
+        });
+
+        // 监听分P确认结果
+        socket.on('episodes_confirmations', function(data) {
+            console.log('收到分P确认结果:', data);
+            handleEpisodesConfirmations(data.confirmations);
         });
 
         // 选项卡切换
@@ -2146,7 +2152,7 @@
                     <label style="font-size: 12px; color: #666; min-width: 70px;">📺 分P选择:</label>
                     <input type="text" class="precise-parts-input" placeholder="留空=全部">
                     <div class="precise-parts-help">
-                        语法: 1,3,5 | 1~5 | ~3 | 3~ | -2~ | ~
+                        语法: 1,3,5(指定) | 1~5(范围) | ~3(前3个) | 3~(从3开始) | -2~(后2个) | ~-2(除了最后2个) | ~(全部)
                     </div>
                 </div>
             `;
@@ -2183,7 +2189,7 @@
             }
 
             // 收集所有URL和配置
-            const urls = [];
+            const urlConfigs = [];
             let hasError = false;
 
             urlItems.forEach((item, index) => {
@@ -2205,16 +2211,15 @@
                     return;
                 }
 
-                // 构建最终URL（带分P参数）
-                let finalUrl = url;
-                if (parts) {
-                    finalUrl = `${url}|p=${parts}`;
-                }
-
-                urls.push(finalUrl);
+                // 构建URL配置对象
+                urlConfigs.push({
+                    url: url,
+                    episodes_selection: parts,
+                    index: index
+                });
             });
 
-            if (hasError || urls.length === 0) {
+            if (hasError || urlConfigs.length === 0) {
                 return;
             }
 
@@ -2223,21 +2228,74 @@
             const audioQuality = parseInt(document.getElementById('preciseAudioQuality').value);
             const concurrent = parseInt(document.getElementById('preciseConcurrent').value);
 
+            // 禁用按钮并显示下载状态
+            preciseDownloadBtn.disabled = true;
+            preciseDownloadBtn.textContent = '🔍 获取分P信息并开始下载...';
+
             // 显示进度区域
             preciseProgress.style.display = 'block';
-            preciseDownloadBtn.disabled = true;
-            preciseDownloadBtn.textContent = '下载中...';
 
-            // 发送下载请求
-            socket.emit('start_parallel_download', {
-                urls: urls,
+            // 直接开始精准下载（包含分P确认显示）
+            socket.emit('start_precise_download_with_confirmation', {
+                url_configs: urlConfigs,
                 quality: quality,
                 audio_quality: audioQuality,
-                concurrent: concurrent,
-                source: 'precise'  // 标识来源
+                concurrent: concurrent
             });
 
-            showAlert(`开始精准下载 ${urls.length} 个视频`, 'success');
+            showAlert(`开始精准下载 ${urlConfigs.length} 个视频`, 'success');
+        }
+
+        // 处理分P确认显示（下载过程中的确认信息）
+        function handleEpisodesConfirmations(confirmations) {
+            // 更新每个URL项的分P显示
+            confirmations.forEach(confirmation => {
+                const item = preciseUrlList.children[confirmation.index];
+                if (!item) return;
+
+                const partsInput = item.querySelector('.precise-parts-input');
+                const urlInput = item.querySelector('.precise-url-input');
+
+                if (confirmation.success) {
+                    // 成功获取分P信息，更新显示
+                    const selectedParts = confirmation.selected_parts;
+                    const totalPages = confirmation.total_pages;
+                    const title = confirmation.title;
+
+                    // 将输入框变为只读并显示确认信息
+                    partsInput.readOnly = true;
+                    partsInput.style.backgroundColor = '#f8f9fa';
+                    partsInput.style.border = '2px solid #28a745';
+
+                    // 格式化分P显示（处理长列表）
+                    let partsDisplay;
+                    if (selectedParts.length <= 10) {
+                        partsDisplay = `P${selectedParts.join(', P')}`;
+                    } else {
+                        const first5 = selectedParts.slice(0, 5);
+                        const last5 = selectedParts.slice(-5);
+                        partsDisplay = `P${first5.join(', P')} ... P${last5.join(', P')}`;
+                    }
+
+                    partsInput.value = `✅ ${partsDisplay} (共${selectedParts.length}个/${totalPages}总)`;
+                    partsInput.title = `视频标题: ${title}\n完整分P列表: P${selectedParts.join(', P')}`;
+
+                    // 添加确认标识
+                    urlInput.style.border = '2px solid #28a745';
+                    urlInput.readOnly = true;
+                    urlInput.style.backgroundColor = '#f8f9fa';
+
+                } else {
+                    // 获取分P信息失败
+                    partsInput.style.backgroundColor = '#fff3cd';
+                    partsInput.style.border = '2px solid #ffc107';
+                    partsInput.value = `⚠️ ${confirmation.message}`;
+                    partsInput.title = confirmation.message;
+                }
+            });
+
+            // 更新按钮状态
+            preciseDownloadBtn.textContent = '下载中...';
         }
     </script>
 </body>

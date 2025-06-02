@@ -30,17 +30,34 @@ def expand_user_path(path_str: str) -> Path:
 def parse_episodes_selection(episodes_str: str, total_episodes: int) -> List[int]:
     """解析分P选择字符串，返回要下载的分P索引列表（从0开始）
 
+    支持的语法：
+        - 无参数: 下载所有分P
+        - ~: 明确指定下载所有分P
+        - 1,3,5: 下载指定分P
+        - 1~5: 下载范围分P
+        - ~3: 下载前3个分P
+        - 3~: 下载从第3个分P开始（包括第三个）后面所有分P
+        - -2~: 下载后2个分P
+        - ~-2: 从P1一直下载到倒数第三个分P(即只有最后两个不下载)
+        - 1,3,5~8: 混合语法
+
     Args:
-        episodes_str: 分P选择字符串，如 "1,3,5-8" 或 "~3,10,-2~"
+        episodes_str: 分P选择字符串
         total_episodes: 总分P数量
 
     Returns:
         List[int]: 要下载的分P索引列表（从0开始）
 
     Examples:
-        parse_episodes_selection("1,3,5-8", 10) -> [0, 2, 4, 5, 6, 7]
-        parse_episodes_selection("~3", 10) -> [0, 1, 2]
-        parse_episodes_selection("-2~", 10) -> [8, 9]
+        parse_episodes_selection("", 10) -> [0,1,2,3,4,5,6,7,8,9]  # 无参数，全部
+        parse_episodes_selection("~", 10) -> [0,1,2,3,4,5,6,7,8,9]  # ~，全部
+        parse_episodes_selection("1,3,5", 10) -> [0,2,4]  # 指定分P
+        parse_episodes_selection("1~5", 10) -> [0,1,2,3,4]  # 范围
+        parse_episodes_selection("~3", 10) -> [0,1,2]  # 前3个
+        parse_episodes_selection("3~", 10) -> [2,3,4,5,6,7,8,9]  # 从第3个开始
+        parse_episodes_selection("-2~", 10) -> [8,9]  # 后2个
+        parse_episodes_selection("~-2", 10) -> [0,1,2,3,4,5,6,7]  # 除了最后2个
+        parse_episodes_selection("1,3,5~8", 10) -> [0,2,4,5,6,7]  # 混合
     """
     if not episodes_str or episodes_str.strip() == "":
         # 空字符串表示全选
@@ -48,8 +65,9 @@ def parse_episodes_selection(episodes_str: str, total_episodes: int) -> List[int
 
     episodes_str = episodes_str.strip()
 
-    # 处理特殊符号 $ 表示最后一集
-    episodes_str = episodes_str.replace('$', str(total_episodes))
+    # 特殊情况：单独的 ~ 表示全选
+    if episodes_str == "~":
+        return list(range(total_episodes))
 
     selected_indices = set()
 
@@ -63,35 +81,35 @@ def parse_episodes_selection(episodes_str: str, total_episodes: int) -> List[int
 
         if '~' in part:
             # 范围选择
-            if part.startswith('~'):
-                # ~3 表示从第1集到第3集
+            if part.startswith('~') and not part.endswith('~'):
+                # ~3 表示前3个分P
+                # ~-2 表示除了最后2个分P
                 end_str = part[1:]
                 start_idx = 0
-                end_idx = int(end_str) - 1 if end_str else total_episodes - 1
-            elif part.endswith('~'):
-                # -2~ 表示从倒数第2集到最后一集
-                start_str = part[:-1]
-                start_num = int(start_str)
-                if start_num < 0:
-                    start_idx = total_episodes + start_num
+                if end_str.startswith('-'):
+                    # ~-2 表示除了最后2个
+                    exclude_count = int(end_str[1:])  # 去掉负号
+                    end_idx = total_episodes - exclude_count - 1
                 else:
-                    start_idx = start_num - 1
+                    # ~3 表示前3个
+                    end_idx = int(end_str) - 1
+            elif part.endswith('~') and not part.startswith('~'):
+                # 3~ 表示从第3个开始到最后
+                # -2~ 表示后2个分P
+                start_str = part[:-1]
+                if start_str.startswith('-'):
+                    # -2~ 表示后2个
+                    back_count = int(start_str[1:])  # 去掉负号
+                    start_idx = total_episodes - back_count
+                else:
+                    # 3~ 表示从第3个开始
+                    start_idx = int(start_str) - 1
                 end_idx = total_episodes - 1
             else:
-                # 5~8 表示从第5集到第8集
+                # 1~5 表示从第1个到第5个
                 start_str, end_str = part.split('~', 1)
-                start_num = int(start_str) if start_str else 1
-                end_num = int(end_str) if end_str else total_episodes
-
-                if start_num < 0:
-                    start_idx = total_episodes + start_num
-                else:
-                    start_idx = start_num - 1
-
-                if end_num < 0:
-                    end_idx = total_episodes + end_num
-                else:
-                    end_idx = end_num - 1
+                start_idx = int(start_str) - 1 if start_str else 0
+                end_idx = int(end_str) - 1 if end_str else total_episodes - 1
 
             # 添加范围内的所有索引
             for i in range(max(0, start_idx), min(total_episodes, end_idx + 1)):
@@ -99,13 +117,8 @@ def parse_episodes_selection(episodes_str: str, total_episodes: int) -> List[int
         else:
             # 单个选择
             episode_num = int(part)
-            if episode_num < 0:
-                # 负数表示倒数第几集
-                idx = total_episodes + episode_num
-            else:
-                # 正数表示第几集（从1开始）
-                idx = episode_num - 1
-
+            # 正数表示第几集（从1开始）
+            idx = episode_num - 1
             if 0 <= idx < total_episodes:
                 selected_indices.add(idx)
 
@@ -765,6 +778,55 @@ class BilibiliAPIClient:
         response = await self.session.get(pic_url)
         return response.content
     
+    async def get_episodes_confirmation(self, url: str, episodes_selection: Optional[str] = None) -> List[int]:
+        """
+        获取分P确认信息并显示
+
+        Args:
+            url: 纯净的视频URL（已处理过URL级别参数）
+            episodes_selection: 分P选择参数（已处理过优先级：URL级别 > -p参数 > 默认全部）
+
+        Returns:
+            List[int]: 要下载的分P列表（从1开始的分P编号）
+        """
+        # 1. 获取视频信息
+        video_info = await self.get_video_info(url)
+        title = video_info['title']
+        total_pages = len(video_info['pages'])
+
+        # 2. 解析分P选择
+        if episodes_selection:
+            # 使用parse_episodes_selection函数解析（返回0基索引）
+            selected_indices = parse_episodes_selection(episodes_selection, total_pages)
+            # 转换为1基索引
+            selected_parts = [i + 1 for i in selected_indices]
+
+            # 检查是否有有效的分P被选中
+            if not selected_parts:
+                print(f"⚠️ 警告: 分P选择 '{episodes_selection}' 超出范围 (视频只有 {total_pages} 个分P)")
+                print(f"📋 将改为下载所有分P")
+                selected_parts = list(range(1, total_pages + 1))
+                episodes_selection_display = f"{episodes_selection} → 全部分P (自动修正)"
+            else:
+                episodes_selection_display = episodes_selection
+        else:
+            # 默认下载全部
+            selected_parts = list(range(1, total_pages + 1))
+            episodes_selection_display = "全部分P (默认)"
+
+        # 3. 显示确认信息
+        print(f"📺 视频标题: {title}")
+        print(f"📊 总分P数: {total_pages}")
+
+        if episodes_selection:
+            print(f"🎯 分P选择: {episodes_selection_display}")
+        else:
+            print(f"🎯 分P选择: {episodes_selection_display}")
+
+        print(f"✅ 将要下载的分P: P{selected_parts} (共 {len(selected_parts)} 个)")
+
+        return selected_parts
+
     def _get_codec_name(self, codecid: int) -> str:
         """获取编码名称"""
         codec_map = {7: "avc", 12: "hevc", 13: "av1"}
@@ -930,6 +992,9 @@ class DownloadTask:
                 total_pages = len(self.video_info['pages'])
                 is_multi_p = total_pages > 1
 
+                # 立即显示分P确认信息（在视频信息解析完成后）
+                episodes_selection = self.task_config.get('episodes_selection', self.config.episodes_selection)
+
                 if is_multi_p:
                     self._print_if_not_silent(f"📺 检测到多P视频，共 {total_pages} 个分P")
 
@@ -966,17 +1031,16 @@ class DownloadTask:
 
     async def _download_multi_p_video(self, client: BilibiliAPIClient):
         """下载多P视频"""
-        # 解析分P选择
+        # 解析分P选择并显示确认信息
         episodes_selection = self.task_config.get('episodes_selection', self.config.episodes_selection)
         total_pages = len(self.video_info['pages'])
 
+        # 解析分P选择（分P确认显示已在CLI中完成）
         if episodes_selection:
             selected_indices = parse_episodes_selection(episodes_selection, total_pages)
-            self._print_if_not_silent(f"📋 选择下载分P: {[i+1 for i in selected_indices]} (共 {len(selected_indices)} 个)")
         else:
             # 默认下载全部
             selected_indices = list(range(total_pages))
-            self._print_if_not_silent(f"📋 下载全部分P: 1-{total_pages}")
 
         if not selected_indices:
             raise Exception("没有选择任何分P进行下载")
@@ -1073,6 +1137,8 @@ class DownloadTask:
 
     async def _download_single_p_video(self, client: BilibiliAPIClient):
         """下载单P视频（原有逻辑）"""
+        # 单P视频的分P确认显示已在CLI中完成
+
         # 初始化输出目录和文件名
         output_dir = expand_user_path(self.task_config.get('output_dir', self.config.default_output_dir))
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -2463,11 +2529,16 @@ class YuttoPlus:
                 started_count += 1
         
         print(f"📥 启动了 {started_count} 个初始任务")
-        
+        print()  # 为分P确认信息留空行
+
         # 开始执行启动的任务
         for task_id, download_task in self.task_manager.get_running_tasks().items():
             download_task.start()
-        
+
+        # 给分P确认信息足够的显示时间，确保用户能看到
+        import time
+        time.sleep(2)  # 增加到2秒，确保分P确认信息不被刷新
+
         print()  # 为进度显示留空行
     
     def on_task_progress(self, task_id: str, progress_info: Dict):

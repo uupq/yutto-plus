@@ -75,6 +75,17 @@ def parse_url_with_parts(url_string: str):
     """
     解析URL字符串，提取URL和分P参数
 
+    支持的分P语法：
+        - 无参数: 下载所有分P
+        - ~: 明确指定下载所有分P
+        - 1,3,5: 下载指定分P
+        - 1~5: 下载范围分P
+        - ~3: 下载前3个分P
+        - 3~: 下载从第3个分P开始（包括第三个）后面所有分P
+        - -2~: 下载后2个分P
+        - ~-2: 从P1一直下载到倒数第三个分P(即只有最后两个不下载)
+        - 1,3,5~8: 混合语法
+
     Args:
         url_string: 可能包含分P参数的URL字符串
 
@@ -85,12 +96,15 @@ def parse_url_with_parts(url_string: str):
         parse_url_with_parts("https://www.bilibili.com/video/BV123|p=1,3,5")
         -> ("https://www.bilibili.com/video/BV123", "1,3,5")
 
+        parse_url_with_parts("https://www.bilibili.com/video/BV123|p=~-2")
+        -> ("https://www.bilibili.com/video/BV123", "~-2")
+
         parse_url_with_parts("https://www.bilibili.com/video/BV123")
         -> ("https://www.bilibili.com/video/BV123", None)
     """
     # 使用正则表达式匹配URL末尾的分P参数
-    # 模式: |p=分P选择 (必须在字符串末尾，分P选择不能为空)
-    pattern = r'^(.+?)\|p=([^|]+)$'
+    # 模式: |p=分P选择 (必须在字符串末尾)
+    pattern = r'^(.+?)\|p=([^|]*)$'
 
     match = re.match(pattern, url_string.strip())
     if match:
@@ -104,7 +118,8 @@ def parse_url_with_parts(url_string: str):
         # 验证分P参数的基本格式（详细验证在下载器中进行）
         if not parts_selection.strip():
             raise ValueError(f"分P选择不能为空")
-        if not re.match(r'^[0-9,~\-\$\s]+$', parts_selection):
+        # 更新正则表达式以支持新语法（移除$符号，因为已经不使用）
+        if not re.match(r'^[0-9,~\-\s]+$', parts_selection):
             raise ValueError(f"无效的分P选择格式: {parts_selection}")
 
         return clean_url, parts_selection
@@ -117,6 +132,90 @@ def parse_url_with_parts(url_string: str):
             raise ValueError(f"无效的B站视频链接: {clean_url}")
 
         return clean_url, None
+
+def get_episodes_confirmation_info(url: str, episodes_selection: str = None):
+    """
+    获取分P确认信息
+
+    Args:
+        url: 视频URL
+        episodes_selection: 分P选择参数
+
+    Returns:
+        Dict: 包含分P确认信息的字典
+    """
+    try:
+        import asyncio
+        import sys
+        from pathlib import Path
+
+        # 确保能够导入模块
+        current_dir = Path(__file__).parent.parent / "src"
+        if str(current_dir) not in sys.path:
+            sys.path.insert(0, str(current_dir))
+
+        from yutto_plus.core import BilibiliAPIClient, parse_episodes_selection
+
+        async def get_video_info():
+            async with BilibiliAPIClient() as client:
+                video_info = await client.get_video_info(url)
+                return video_info
+
+        # 运行异步函数获取视频信息
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            video_info = loop.run_until_complete(get_video_info())
+        finally:
+            loop.close()
+
+        if not video_info or 'pages' not in video_info:
+            return {
+                'success': False,
+                'message': '无法获取视频信息',
+                'url': url,
+                'episodes_selection': episodes_selection
+            }
+
+        total_pages = len(video_info['pages'])
+
+        if episodes_selection:
+            selected_indices = parse_episodes_selection(episodes_selection, total_pages)
+            selected_parts = [i+1 for i in selected_indices]
+
+            # 检查是否有有效的分P被选中
+            if not selected_parts:
+                # 分P选择超出范围，改为下载全部
+                selected_parts = list(range(1, total_pages + 1))
+                episodes_selection_display = f"{episodes_selection} → 全部分P (自动修正)"
+                message = f"分P选择 '{episodes_selection}' 超出范围 (视频只有 {total_pages} 个分P)，已自动修正为下载全部分P"
+            else:
+                episodes_selection_display = episodes_selection
+                message = None
+        else:
+            # 默认下载全部
+            selected_parts = list(range(1, total_pages + 1))
+            episodes_selection_display = "全部分P (默认)"
+            message = None
+
+        return {
+            'success': True,
+            'url': url,
+            'episodes_selection': episodes_selection_display,
+            'selected_parts': selected_parts,
+            'count': len(selected_parts),
+            'total_pages': total_pages,
+            'title': video_info.get('title', '未知标题'),
+            'message': message
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'获取分P信息失败: {str(e)}',
+            'url': url,
+            'episodes_selection': episodes_selection
+        }
 
 def format_task_title_with_multi_p(progress):
     """格式化任务标题，添加多P信息"""
@@ -415,7 +514,7 @@ create_folder_for_multi_p: {str(config_data.get('create_folder_for_multi_p', Tru
     if episodes_selection_value:
         config_template += f'\nepisodes_selection: "{episodes_selection_value}"  # 分P选择: {episodes_selection_value}'
     else:
-        config_template += '\n# episodes_selection: "1,3,5-8"  # 分P选择 (可选): 支持范围和排除语法'
+        config_template += '\n# episodes_selection: "1,3,5~8"  # 分P选择 (可选): 支持范围和排除语法'
 
     config_template += f"""
 
@@ -571,6 +670,89 @@ def handle_load_config(data):
     except Exception as e:
         print(f'❌ [错误] 加载配置文件时出错: {e}')
         emit('error', {'message': f'加载配置文件时出错: {str(e)}'})
+
+@socketio.on('start_precise_download_with_confirmation')
+def handle_precise_download_with_confirmation(data):
+    """处理精准下载（包含分P确认显示）"""
+    session_id = request.sid
+
+    try:
+        # 获取URL配置列表
+        url_configs = data.get('url_configs', [])
+        quality = data.get('quality', 80)
+        audio_quality = data.get('audio_quality', 30280)
+        concurrent = data.get('concurrent', 2)
+
+        if not url_configs:
+            emit('error', {'message': '没有提供URL配置'})
+            return
+
+        # 1. 先进行分P确认并显示
+        confirmations = []
+        final_urls = []
+
+        for url_config in url_configs:
+            url_string = url_config.get('url', '').strip()
+            episodes_selection = url_config.get('episodes_selection', '').strip()
+            index = url_config.get('index', 0)
+
+            if not url_string:
+                continue
+
+            try:
+                # 解析URL和分P参数
+                clean_url, url_parts = parse_url_with_parts(url_string)
+
+                # 确定最终的分P选择：URL级别 > 表单级别
+                final_episodes_selection = url_parts if url_parts else (episodes_selection if episodes_selection else None)
+
+                # 获取分P确认信息
+                confirmation = get_episodes_confirmation_info(clean_url, final_episodes_selection)
+                confirmation['index'] = index
+                confirmation['original_url'] = url_string
+                confirmations.append(confirmation)
+
+                # 构建最终URL
+                if confirmation['success']:
+                    final_url = clean_url
+                    if final_episodes_selection:
+                        final_url = f"{clean_url}|p={final_episodes_selection}"
+                    final_urls.append(final_url)
+
+            except Exception as e:
+                confirmations.append({
+                    'index': index,
+                    'success': False,
+                    'message': f'解析失败: {str(e)}',
+                    'original_url': url_string,
+                    'episodes_selection': episodes_selection
+                })
+
+        # 2. 发送分P确认信息给前端显示
+        emit('episodes_confirmations', {
+            'confirmations': confirmations,
+            'total_urls': len(url_configs)
+        })
+
+        # 3. 如果有有效的URL，开始下载
+        if final_urls:
+            # 使用现有的并行下载逻辑
+            download_data = {
+                'urls': final_urls,
+                'quality': quality,
+                'audio_quality': audio_quality,
+                'concurrent': concurrent,
+                'source': 'precise'
+            }
+
+            # 调用现有的并行下载处理函数
+            handle_parallel_download_request(download_data)
+        else:
+            emit('error', {'message': '没有有效的URL可以下载'})
+
+    except Exception as e:
+        print(f"❌ 精准下载失败: {e}")
+        emit('error', {'message': f'精准下载失败: {str(e)}'})
 
 @socketio.on('start_parallel_download')
 def handle_parallel_download_request(data):

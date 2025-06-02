@@ -9,7 +9,7 @@ import sys
 import time
 import re
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 
 from . import YuttoPlus, TaskStatus, ConfigManager
 
@@ -102,6 +102,65 @@ def validate_parts_selection(parts_selection: str) -> bool:
         return False
 
 
+def get_episodes_info_sync(url: str, episodes_selection: Optional[str]) -> Optional[Dict]:
+    """
+    同步获取视频的分P信息
+
+    Args:
+        url: 视频URL
+        episodes_selection: 分P选择参数
+
+    Returns:
+        Dict: 包含selected_parts和count的字典，如果获取失败返回None
+    """
+    try:
+        import asyncio
+        import sys
+        from pathlib import Path
+
+        # 确保能够导入模块
+        current_dir = Path(__file__).parent
+        if str(current_dir) not in sys.path:
+            sys.path.insert(0, str(current_dir))
+
+        from yutto_plus.api import BilibiliAPIClient
+        from yutto_plus.core import parse_episodes_selection
+
+        async def get_video_info():
+            async with BilibiliAPIClient() as client:
+                video_info = await client.get_video_info(url)
+                return video_info
+
+        # 运行异步函数获取视频信息
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            video_info = loop.run_until_complete(get_video_info())
+        finally:
+            loop.close()
+
+        if not video_info or 'pages' not in video_info:
+            return None
+
+        total_pages = len(video_info['pages'])
+
+        if episodes_selection:
+            selected_indices = parse_episodes_selection(episodes_selection, total_pages)
+            selected_parts = [i+1 for i in selected_indices]
+        else:
+            # 默认下载全部
+            selected_parts = list(range(1, total_pages + 1))
+
+        return {
+            'selected_parts': selected_parts,
+            'count': len(selected_parts),
+            'total_pages': total_pages
+        }
+
+    except Exception:
+        return None
+
+
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
@@ -118,11 +177,12 @@ def parse_args():
   %(prog)s -p "1,3,5~8" "https://www.bilibili.com/video/BV1unjgzqEms/"  # 下载指定分P
   %(prog)s -p "~3" "https://www.bilibili.com/video/BV1unjgzqEms/"       # 下载前3P
   %(prog)s -p "-2~" "https://www.bilibili.com/video/BV1unjgzqEms/"      # 下载后2P
+  %(prog)s -p "~-2" "https://www.bilibili.com/video/BV1unjgzqEms/"      # 除了最后2P
   %(prog)s --no-folder "https://www.bilibili.com/video/BV1unjgzqEms/"   # 不创建文件夹
 
   # URL级别分P选择（新功能）
-  %(prog)s "https://www.bilibili.com/video/BV1111111111|p=1,3,5" "https://www.bilibili.com/video/BV2222222222|p=2-4"
-  %(prog)s -p "1-3" "https://www.bilibili.com/video/BV1111111111|p=5" "https://www.bilibili.com/video/BV2222222222"
+  %(prog)s "https://www.bilibili.com/video/BV1111111111|p=1,3,5" "https://www.bilibili.com/video/BV2222222222|p=2~4"
+  %(prog)s -p "1~3" "https://www.bilibili.com/video/BV1111111111|p=5" "https://www.bilibili.com/video/BV2222222222"
 
   # 并行下载多个视频
   %(prog)s -c 3 "https://www.bilibili.com/video/BV1LWjXzvEX1/" "https://www.bilibili.com/video/BV1234567890/"
@@ -168,12 +228,12 @@ Web界面功能:
 多P视频支持:
   自动检测多P视频，为多P视频创建专门文件夹
   使用 -p/--episodes 选择要下载的分P，支持范围和列表语法
-  支持语法: "1,3,5-8", "~3", "-2~", "$" 等
+  支持语法: "1,3,5~8", "~3", "-2~", "~-2", "~", "$" 等
   使用 --no-folder 禁止为多P视频创建文件夹
 
   URL级别分P选择（新功能）:
   在URL末尾使用 |p=分P选择 为单个视频指定分P
-  语法: "URL|p=1,3,5" 或 "URL|p=2-4"
+  语法: "URL|p=1,3,5" 或 "URL|p=2~4" 或 "URL|p=~-2"
   URL级别配置优先级高于全局 -p 参数
   支持混合使用：全局配置 + URL级别配置
 
@@ -365,7 +425,7 @@ Web界面功能:
     parser.add_argument(
         '-p', '--episodes',
         type=str,
-        help='选择要下载的分P，支持范围和列表，如 "1,3,5~8" 或 "~3,10,-2~"'
+        help='选择要下载的分P，支持范围和列表，如 "1,3,5~8" 或 "~3,10,-2~,~-2"'
     )
 
     parser.add_argument(
@@ -467,6 +527,53 @@ def main():
         # 更新args.urls为解析后的URL列表（保持向后兼容）
         args.urls = [url for url, _ in parsed_urls]
         args.parsed_urls = parsed_urls  # 添加解析结果
+
+        # 立即进行分P预分析和确认显示
+        if not args.quiet:
+            print("\n📋 分P选择确认:")
+            print("=" * 30)
+
+            for i, (clean_url, url_parts) in enumerate(parsed_urls):
+                # 确定最终的分P选择：URL级别 > 全局参数
+                final_episodes_selection = url_parts if url_parts else args.episodes
+
+                print(f"📺 视频 {i+1}: {clean_url}")
+
+                # 显示分P选择参数
+                if final_episodes_selection:
+                    source = "URL级别" if url_parts else "全局参数"
+                    print(f"   🎯 分P选择: {final_episodes_selection} ({source})")
+                else:
+                    print(f"   🎯 分P选择: 全部分P (默认)")
+
+                # 立即获取视频信息并显示具体分P列表
+                try:
+                    print(f"   🔍 正在获取视频信息...")
+
+                    # 使用新的分P确认函数
+                    import asyncio
+                    from yutto_plus.core import BilibiliAPIClient
+
+                    async def get_confirmation():
+                        async with BilibiliAPIClient() as client:
+                            return await client.get_episodes_confirmation(clean_url, final_episodes_selection)
+
+                    # 运行异步函数
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        selected_parts = loop.run_until_complete(get_confirmation())
+                        print(f"   ✅ 分P确认完成")
+                    finally:
+                        loop.close()
+
+                except Exception as e:
+                    print(f"   ❌ 获取分P信息失败: {str(e)}")
+                    print(f"   📋 将在下载时重新获取分P信息")
+
+                print()  # 空行分隔
+
+            print("=" * 30)
         
         # 判断是单个下载还是并行下载
         if len(args.urls) == 1 and args.concurrent == 1:
@@ -533,6 +640,8 @@ def single_download_mode(args):
         if final_episodes_selection:
             source = "URL级别" if url_parts else "全局参数"
             print(f"📺 分P选择: {final_episodes_selection} ({source})")
+        else:
+            print(f"📺 分P选择: 全部分P (默认)")
 
         # 显示将要下载的内容
         download_items = get_download_items(args, require_video, require_audio, require_danmaku, require_cover)
@@ -633,10 +742,23 @@ def parallel_download_mode(args):
         }
         tasks.append((url, task_config))
 
-        # 在详细模式下显示每个任务的分P配置
-        if not args.quiet and final_episodes_selection:
-            source = "URL级别" if url_parts else "全局参数"
-            print(f"   📺 任务 {i+1} 分P选择: {final_episodes_selection} ({source})")
+        # 在详细模式下显示每个任务的分P配置，并立即获取视频信息显示具体分P
+        if not args.quiet:
+            if final_episodes_selection:
+                source = "URL级别" if url_parts else "全局参数"
+                print(f"   📺 任务 {i+1} 分P选择: {final_episodes_selection} ({source})")
+            else:
+                print(f"   📺 任务 {i+1} 分P选择: 全部分P (默认)")
+
+            # 立即获取视频信息并显示具体分P列表
+            try:
+                episodes_info = get_episodes_info_sync(url, final_episodes_selection)
+                if episodes_info:
+                    print(f"   📋 将要下载的分P: P{episodes_info['selected_parts']} (共 {episodes_info['count']} 个)")
+                else:
+                    print(f"   📋 将在下载时确定具体分P")
+            except Exception as e:
+                print(f"   📋 获取分P信息失败: {str(e)[:50]}...")
     
     # 添加任务并开始下载
     task_ids = downloader.add_download_tasks(tasks)
