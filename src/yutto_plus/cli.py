@@ -444,13 +444,19 @@ Web界面功能:
     parser.add_argument(
         '--update-uploader',
         action='store_true',
-        help='更新已存在的UP主视频列表，检查新投稿'
+        help='更新已存在的UP主视频列表，检查新投稿。如果没有指定--uploader，则更新当前目录下所有符合格式的UP主文件夹'
     )
 
     parser.add_argument(
         '--list-only',
         action='store_true',
         help='仅获取并显示UP主视频列表，不进行下载'
+    )
+
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='强制更新，忽略CSV文件的保存时间检查'
     )
 
     parser.add_argument(
@@ -503,7 +509,7 @@ def main():
             return
         
         # 处理UP主投稿视频下载
-        if args.uploader:
+        if args.uploader or args.update_uploader:
             handle_uploader_download(args, config_manager)
             return
 
@@ -1158,6 +1164,13 @@ def handle_uploader_download(args, config_manager):
     import asyncio
     from yutto_plus.core import parse_up_space_url, UploaderVideoManager
 
+    # 检查是否是批量更新模式
+    if args.update_uploader and not args.uploader:
+        # 批量更新当前目录下所有符合格式的UP主文件夹
+        print("🔄 批量更新模式：扫描当前目录下的UP主文件夹")
+        asyncio.run(batch_update_uploaders(args, config_manager))
+        return
+
     # 解析UP主UID
     uid = None
     if args.uploader.isdigit():
@@ -1457,6 +1470,262 @@ def handle_uploader_delete(args, config_manager):
         print(f"遇到的错误数: {error_count}")
     print("=" * 40)
     print("🎉 删除操作完成！")
+
+
+async def batch_update_uploaders(args, config_manager):
+    """批量更新当前目录下所有符合格式的UP主文件夹"""
+    import asyncio
+    import os
+    import re
+    from pathlib import Path
+    from datetime import datetime, timedelta
+    from yutto_plus.core import UploaderVideoManager
+
+    # 获取扫描目录：优先使用 -o 参数指定的目录，否则使用当前工作目录
+    if hasattr(args, 'output') and args.output:
+        scan_dir = Path(args.output).expanduser()
+    else:
+        scan_dir = Path.cwd()
+
+    print(f"🔍 扫描目录: {scan_dir}")
+
+    if not scan_dir.exists() or not scan_dir.is_dir():
+        print(f"❌ 错误: 扫描目录 '{scan_dir}' 不存在或不是目录")
+        return
+
+    # 查找符合条件的文件夹
+    folders_to_update = []
+    for item in scan_dir.iterdir():
+        if item.is_dir():
+            # 检查是否符合 UID-用户名 格式
+            match = re.match(r'^(\d+)-(.+)$', item.name)
+            if match:
+                csv_file = item / "video_urls.csv"
+                if csv_file.exists():
+                    uid = int(match.group(1))
+                    username = match.group(2)
+                    folders_to_update.append({
+                        'path': item,
+                        'uid': uid,
+                        'username': username,
+                        'csv_path': csv_file
+                    })
+
+    if not folders_to_update:
+        print("📋 没有找到符合条件的UP主文件夹（格式：UID-用户名，且包含video_urls.csv）")
+        return
+
+    print(f"\n📁 找到 {len(folders_to_update)} 个UP主文件夹:")
+    for folder_info in folders_to_update:
+        print(f"  - {folder_info['path'].name} (UID: {folder_info['uid']})")
+
+    # 加载配置文件（如果指定）
+    config = {}
+    if args.config:
+        try:
+            config = config_manager.load_config(args.config)
+            if not config_manager.validate_config(config):
+                print("❌ 配置文件验证失败")
+                return
+            print(f"✅ 已加载配置文件: {args.config}")
+        except Exception as e:
+            print(f"❌ 配置文件错误: {e}")
+            return
+
+    # 命令行参数覆盖配置文件参数
+    merged_args = merge_config_with_args(config, args)
+
+    print(f"\n🚀 开始批量更新...")
+    updated_count = 0
+    failed_count = 0
+
+    for i, folder_info in enumerate(folders_to_update, 1):
+        print(f"\n--- 处理文件夹 {i}/{len(folders_to_update)}: {folder_info['path'].name} ---")
+
+        try:
+            # 检查CSV文件的最后保存时间（除非使用--force）
+            if not merged_args.force:
+                last_save_time = await get_csv_save_time(folder_info['csv_path'])
+                if last_save_time:
+                    hours_since_save = (datetime.now() - last_save_time).total_seconds() / 3600
+                    if hours_since_save < 12:
+                        print(f"⏰ CSV文件在 {hours_since_save:.1f} 小时前保存，跳过更新（可使用 --force 强制更新）")
+                        continue
+
+            # 更新单个UP主，传递现有用户名避免API调用
+            success = await update_single_uploader(
+                folder_info['uid'],
+                folder_info['path'].parent,  # 使用父目录作为输出目录
+                merged_args,
+                existing_username=folder_info['username']  # 传递现有用户名
+            )
+
+            if success:
+                updated_count += 1
+                print(f"✅ {folder_info['path'].name} 更新完成")
+            else:
+                failed_count += 1
+                print(f"❌ {folder_info['path'].name} 更新失败")
+
+            # 在处理下一个文件夹前稍作延迟，避免API频率限制
+            if i < len(folders_to_update):
+                print("⏳ 等待 5 秒...")
+                await asyncio.sleep(5)
+
+        except Exception as e:
+            failed_count += 1
+            print(f"❌ 处理 {folder_info['path'].name} 时出错: {e}")
+
+    # 显示总结
+    print(f"\n📊 批量更新总结:")
+    print(f"   📁 扫描到的文件夹: {len(folders_to_update)}")
+    print(f"   ✅ 成功更新: {updated_count}")
+    print(f"   ❌ 更新失败: {failed_count}")
+    print(f"   ⏭️ 跳过更新: {len(folders_to_update) - updated_count - failed_count}")
+
+
+async def get_csv_save_time(csv_path):
+    """获取CSV文件的保存时间"""
+    from datetime import datetime
+
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('# SaveTime:'):
+                    try:
+                        time_str = line.strip().split('# SaveTime: ')[1]
+                        return datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                    except (IndexError, ValueError):
+                        break
+    except Exception:
+        pass
+    return None
+
+
+async def update_single_uploader(uid, output_dir, args, existing_username=None):
+    """更新单个UP主的视频列表并下载新视频"""
+    try:
+        from yutto_plus.core import UploaderVideoManager
+
+        # 创建UP主视频管理器，如果有现有用户名则直接使用
+        manager = UploaderVideoManager(
+            uid=uid,
+            output_dir=output_dir,
+            sessdata=args.sessdata or "",
+            username=existing_username  # 传递现有用户名，避免重复API调用
+        )
+
+        # 强制更新检查
+        videos = await manager.get_uploader_videos(update_check=True)
+
+        if not videos:
+            print(f"📋 UID {uid}: 没有找到投稿视频")
+            return True
+
+        # 显示统计信息
+        total_videos = len(videos)
+        downloaded_count = sum(1 for v in videos if v.get('downloaded', '').lower() == 'true')
+        new_count = sum(1 for v in videos if v.get('downloaded', '').lower() != 'true')
+
+        print(f"📊 UID {uid}: 总视频 {total_videos}, 已下载 {downloaded_count}, 新增/待下载 {new_count}")
+
+        # 如果有新视频需要下载，立即开始下载
+        if new_count > 0:
+            print(f"🚀 开始下载 {new_count} 个新视频...")
+
+            # 获取需要下载的视频URL列表
+            new_videos = [v for v in videos if v.get('downloaded', '').lower() != 'true']
+            video_urls = [v['url'] for v in new_videos]
+
+            # 获取用户目录
+            user_directory = await manager.get_user_directory()
+
+            # 开始下载
+            success = await download_uploader_videos(video_urls, str(user_directory), args)
+
+            if success:
+                print(f"✅ UID {uid}: 新视频下载完成")
+            else:
+                print(f"⚠️ UID {uid}: 部分视频下载可能失败")
+        else:
+            print(f"✅ UID {uid}: 没有新视频需要下载")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ 更新 UID {uid} 失败: {e}")
+        return False
+
+
+async def download_uploader_videos(video_urls, output_dir, args):
+    """下载UP主的视频列表"""
+    try:
+        import asyncio
+        from yutto_plus.core import YuttoPlus
+
+        # 创建下载器实例
+        downloader = YuttoPlus(
+            max_concurrent=args.concurrent or 2,
+            default_output_dir=output_dir,
+            default_quality=args.quality or 80,
+            default_audio_quality=args.audio_quality or 30280,
+            default_video_codec=args.video_codec or 'avc',
+            default_output_format=args.format or 'mp4',
+            overwrite=args.overwrite or False,
+            enable_resume=args.enable_resume if hasattr(args, 'enable_resume') else True,
+            sessdata=args.sessdata or ""
+        )
+
+        # 准备下载任务
+        tasks = []
+        for url in video_urls:
+            task_config = {
+                'quality': args.quality or 80,
+                'audio_quality': args.audio_quality or 30280,
+                'video_codec': args.video_codec or 'avc',
+                'output_format': args.format or 'mp4',
+                'output_dir': output_dir,
+                'overwrite': args.overwrite or False,
+                'enable_resume': getattr(args, 'enable_resume', True),
+                'episodes_selection': '',  # UP主下载通常不需要分P选择
+                'create_folder_for_multi_p': getattr(args, 'create_folder_for_multi_p', True),
+                'no_danmaku': getattr(args, 'no_danmaku', False),
+                'no_cover': getattr(args, 'no_cover', False),
+                'danmaku_format': getattr(args, 'danmaku_format', 'ass'),
+                'audio_format': getattr(args, 'audio_format', 'mp3'),
+                'audio_bitrate': getattr(args, 'audio_bitrate', '192k')
+            }
+            tasks.append((url, task_config))
+
+        # 添加任务到下载器
+        task_ids = downloader.add_download_tasks(tasks)
+
+        # 启动下载
+        downloader.start_parallel_download(display_mode='table')
+
+        # 等待所有任务完成
+        while True:
+            await asyncio.sleep(1)
+            queue_status = downloader.task_manager.get_queue_status()
+
+            if queue_status['running'] == 0 and queue_status['pending'] == 0:
+                break
+
+        # 获取最终状态
+        final_status = downloader.task_manager.get_queue_status()
+        success_count = final_status['completed']
+        total_count = len(tasks)
+
+        print(f"📊 下载完成: {success_count}/{total_count} 个视频成功")
+
+        # YuttoPlus 不需要手动关闭，移除这行
+        # await downloader.close()
+
+        return success_count > 0
+
+    except Exception as e:
+        print(f"❌ 下载视频失败: {e}")
+        return False
 
 
 if __name__ == "__main__":

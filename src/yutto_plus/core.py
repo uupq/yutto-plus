@@ -910,7 +910,7 @@ class BilibiliAPIClient:
 class UploaderVideoManager:
     """UP主投稿视频管理器"""
 
-    def __init__(self, uid: int, output_dir: Path, sessdata: str = ""):
+    def __init__(self, uid: int, output_dir: Path, sessdata: str = "", username: str = None):
         self.uid = uid
         # 确保正确展开用户目录路径
         if isinstance(output_dir, str):
@@ -920,44 +920,56 @@ class UploaderVideoManager:
         self.output_dir = Path(output_dir)
         self.sessdata = sessdata
         self.csv_path = None
-        self.username = None
+        self.username = username  # 如果提供了用户名，直接使用，避免API调用
 
     async def get_uploader_name(self) -> str:
-        """获取UP主用户名，带重试机制"""
+        """获取UP主用户名，使用bilibili_api库但保持30次重试机制"""
         if self.username:
             return self.username
 
-        max_retries = 30
+        max_retries = 30  # 恢复30次重试，适应批量处理的需求
         retry_delay = 3
 
         for attempt in range(max_retries):
             try:
-                async with BilibiliAPIClient(sessdata=self.sessdata) as client:
-                    user_info = await client.get_user_info(uid=self.uid)
-                    name = user_info.get('name', '')
+                # 使用bilibili_api库，但保持强重试机制
+                from bilibili_api import user
+                u = user.User(self.uid)
+                user_info = await u.get_user_info()
+                name = user_info.get("name", "")
 
-                    if name and name.strip():
-                        # 成功获取到真实用户名
-                        self.username = name
-                        return self.username
-                    else:
-                        # API返回了空名称，需要重试
-                        raise Exception("API返回空用户名")
+                if name and name.strip():
+                    self.username = name
+                    return self.username
+                else:
+                    raise Exception("API返回空用户名")
 
             except Exception as e:
+                error_msg = str(e)
+
+                if "风控校验失败" in error_msg:
+                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 风控校验失败")
+                elif '404' in error_msg:
+                    self.username = f"用户不存在({self.uid})"
+                    return self.username
+                elif '412' in error_msg:
+                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 412 Precondition Failed")
+                elif '-799' in error_msg or '请求过于频繁' in error_msg:
+                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 请求过于频繁，请稍后再试")
+                elif '-401' in error_msg or '非法访问' in error_msg:
+                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 非法访问")
+                else:
+                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): {error_msg}")
+
                 if attempt < max_retries - 1:
-                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): {e}")
                     print(f"🔄 {retry_delay}秒后重试...")
                     await asyncio.sleep(retry_delay)
-                    continue
                 else:
-                    print(f"❌ 重试{max_retries}次后仍无法获取UP主用户名: {e}")
-                    print(f"🔄 使用默认用户名: 用户_{self.uid}")
-                    self.username = f'用户_{self.uid}'
+                    print(f"❌ 重试{max_retries}次后仍无法获取UP主用户名，使用默认用户名")
+                    self.username = f'获取用户名失败({self.uid})'
                     return self.username
 
-        # 这行代码理论上不会执行到，但为了安全起见
-        self.username = f'用户_{self.uid}'
+        self.username = f'获取用户名失败({self.uid})'
         return self.username
 
     async def get_uploader_videos(self, update_check: bool = False) -> List[Dict]:
@@ -997,108 +1009,83 @@ class UploaderVideoManager:
         return videos
 
     async def _fetch_videos_from_api(self) -> List[Dict]:
-        """从B站API获取UP主的所有投稿视频，带重试机制"""
+        """从B站API获取UP主的所有投稿视频，使用bilibili_api库但保持重试机制"""
         videos = []
         page = 1
         max_retries = 30
-        retry_delay = 3  # 3秒重试间隔
+        retry_delay = 3
 
         try:
-            async with BilibiliAPIClient(sessdata=self.sessdata) as client:
-                while True:
-                    success = False
+            # 使用bilibili_api库，但保持强重试机制
+            from bilibili_api import user
+            u = user.User(uid=self.uid)
 
-                    # 重试机制
-                    for attempt in range(max_retries):
-                        try:
-                            # 使用更简单的API获取UP主投稿视频
-                            api_url = f"https://api.bilibili.com/x/space/arc/search"
-                            params = {
-                                'mid': self.uid,
-                                'pn': page,
-                                'ps': 30,  # 每页30个视频
-                                'order': 'pubdate',  # 按发布时间排序
-                                'tid': 0,  # 所有分区
-                                'keyword': '',
-                                'jsonp': 'jsonp'
-                            }
+            print(f"🔍 正在从B站API获取UP主投稿视频...")
 
-                            response = await client.session.get(api_url, params=params)
-                            data = response.json()
+            while True:
+                success = False
 
-                            if data.get('code') == 0:
-                                # 成功获取数据
-                                success = True
-                                break
-                            elif data.get('code') == -799:
-                                # 频率限制，需要重试
-                                if attempt < max_retries - 1:
-                                    print(f"⚠️ 请求频率限制 (第{attempt + 1}/{max_retries}次尝试)，{retry_delay}秒后重试...")
-                                    await asyncio.sleep(retry_delay)
-                                    continue
-                                else:
-                                    print(f"❌ 重试{max_retries}次后仍然失败: {data.get('message', '未知错误')}")
-                                    return videos
-                            else:
-                                # 其他错误
-                                print(f"⚠️ API请求失败 (code: {data.get('code')}): {data.get('message', '未知错误')}")
-                                if attempt < max_retries - 1:
-                                    print(f"🔄 {retry_delay}秒后重试 (第{attempt + 1}/{max_retries}次尝试)...")
-                                    await asyncio.sleep(retry_delay)
-                                    continue
-                                else:
-                                    # 尝试备用API
-                                    if page == 1:
-                                        print("🔄 尝试使用备用API...")
-                                        backup_videos = await self._fetch_videos_backup_api()
-                                        return backup_videos
-                                    return videos
+                # 为每一页添加重试机制
+                for attempt in range(max_retries):
+                    try:
+                        res = await u.get_videos(pn=page, ps=30)
 
-                        except Exception as e:
-                            if attempt < max_retries - 1:
-                                print(f"⚠️ 网络错误 (第{attempt + 1}/{max_retries}次尝试): {e}")
-                                print(f"🔄 {retry_delay}秒后重试...")
-                                await asyncio.sleep(retry_delay)
-                                continue
-                            else:
-                                print(f"❌ 网络请求失败: {e}")
-                                return videos
+                        # 检查响应结构
+                        if "list" not in res or "vlist" not in res["list"] or not res["list"]["vlist"]:
+                            success = True  # 空结果也算成功，说明已经到最后一页
+                            break
 
-                    if not success:
-                        break
+                        vlist = res["list"]["vlist"]
 
-                    # 解析响应数据
-                    result_data = data.get('data', {})
-                    if 'list' in result_data:
-                        vlist = result_data['list'].get('vlist', [])
-                    else:
-                        vlist = result_data.get('vlist', [])
+                        # 处理这一页的视频
+                        for item in vlist:
+                            if 'bvid' in item:
+                                video_info = {
+                                    'url': f"https://www.bilibili.com/video/{item['bvid']}",
+                                    'bvid': item['bvid'],
+                                    'title': item.get('title', ''),
+                                    'duration': self._format_duration(item.get('length', '')),
+                                    'pubdate': item.get('created', 0),
+                                    'downloaded': 'False',
+                                    'file_path': '',
+                                    'error_info': ''
+                                }
+                                videos.append(video_info)
 
-                    if not vlist:
-                        break
+                        print(f"📄 已获取第{page}页，共{len(vlist)}个视频")
+                        success = True
+                        break  # 成功获取，跳出重试循环
 
-                    # 处理这一页的视频
-                    for video in vlist:
-                        video_info = {
-                            'url': f"https://www.bilibili.com/video/{video['bvid']}",
-                            'bvid': video['bvid'],
-                            'title': video.get('title', ''),
-                            'duration': self._format_duration(video.get('length', '')),
-                            'pubdate': video.get('created', 0),
-                            'downloaded': 'False',
-                            'file_path': '',
-                            'error_info': ''
-                        }
-                        videos.append(video_info)
+                    except Exception as e:
+                        error_msg = str(e)
 
-                    print(f"📄 已获取第{page}页，共{len(vlist)}个视频")
+                        if '-799' in error_msg or '请求过于频繁' in error_msg:
+                            print(f"⚠️ 获取视频列表失败 (第{attempt + 1}/{max_retries}次尝试): 请求过于频繁，请稍后再试")
+                        elif '-401' in error_msg or '非法访问' in error_msg:
+                            print(f"⚠️ 获取视频列表失败 (第{attempt + 1}/{max_retries}次尝试): 非法访问")
+                        elif '风控校验失败' in error_msg:
+                            print(f"⚠️ 获取视频列表失败 (第{attempt + 1}/{max_retries}次尝试): 风控校验失败")
+                        else:
+                            print(f"⚠️ 获取视频列表失败 (第{attempt + 1}/{max_retries}次尝试): {error_msg}")
 
-                    # 如果这一页不满30个，说明已经是最后一页
-                    if len(vlist) < 30:
-                        break
+                        if attempt < max_retries - 1:
+                            print(f"🔄 {retry_delay}秒后重试...")
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            print(f"❌ 重试{max_retries}次后仍然失败，停止获取视频列表")
+                            return videos
 
-                    page += 1
-                    await asyncio.sleep(1)  # 页面间延迟
+                if not success:
+                    break
+
+                # 如果这一页没有视频或少于30个，说明已经是最后一页
+                if "list" not in res or "vlist" not in res["list"] or not res["list"]["vlist"]:
+                    break
+                if len(res["list"]["vlist"]) < 30:
+                    break
+
+                page += 1
+                await asyncio.sleep(1)  # 页面间延迟
 
         except Exception as e:
             print(f"❌ 获取UP主视频列表失败: {e}")
@@ -1106,106 +1093,7 @@ class UploaderVideoManager:
         print(f"✅ 获取到 {len(videos)} 个投稿视频")
         return videos
 
-    async def _fetch_videos_backup_api(self) -> List[Dict]:
-        """备用API获取UP主投稿视频，带重试机制"""
-        videos = []
-        page = 1
-        max_retries = 30
-        retry_delay = 3
 
-        try:
-            async with BilibiliAPIClient(sessdata=self.sessdata) as client:
-                while True:
-                    success = False
-
-                    # 重试机制
-                    for attempt in range(max_retries):
-                        try:
-                            # 使用更基础的API
-                            api_url = f"https://api.bilibili.com/x/space/arc/search"
-                            params = {
-                                'mid': self.uid,
-                                'pn': page,
-                                'ps': 25,  # 减少每页数量
-                                'order': 'pubdate'
-                            }
-
-                            response = await client.session.get(api_url, params=params)
-                            data = response.json()
-
-                            if data.get('code') == 0:
-                                success = True
-                                break
-                            elif data.get('code') == -799:
-                                if attempt < max_retries - 1:
-                                    print(f"⚠️ 备用API频率限制 (第{attempt + 1}/{max_retries}次尝试)，{retry_delay}秒后重试...")
-                                    await asyncio.sleep(retry_delay)
-                                    continue
-                                else:
-                                    print(f"❌ 备用API重试{max_retries}次后仍然失败")
-                                    return videos
-                            else:
-                                if attempt < max_retries - 1:
-                                    print(f"⚠️ 备用API错误 (第{attempt + 1}/{max_retries}次尝试): {data.get('message', '未知错误')}")
-                                    print(f"🔄 {retry_delay}秒后重试...")
-                                    await asyncio.sleep(retry_delay)
-                                    continue
-                                else:
-                                    print(f"❌ 备用API最终失败: {data.get('message', '未知错误')}")
-                                    return videos
-
-                        except Exception as e:
-                            if attempt < max_retries - 1:
-                                print(f"⚠️ 备用API网络错误 (第{attempt + 1}/{max_retries}次尝试): {e}")
-                                print(f"🔄 {retry_delay}秒后重试...")
-                                await asyncio.sleep(retry_delay)
-                                continue
-                            else:
-                                print(f"❌ 备用API网络请求失败: {e}")
-                                return videos
-
-                    if not success:
-                        break
-
-                    # 解析数据
-                    result_data = data.get('data', {})
-                    vlist = []
-
-                    # 尝试不同的数据结构
-                    if 'list' in result_data and 'vlist' in result_data['list']:
-                        vlist = result_data['list']['vlist']
-                    elif 'vlist' in result_data:
-                        vlist = result_data['vlist']
-
-                    if not vlist:
-                        break
-
-                    # 处理视频数据
-                    for video in vlist:
-                        video_info = {
-                            'url': f"https://www.bilibili.com/video/{video['bvid']}",
-                            'bvid': video['bvid'],
-                            'title': video.get('title', ''),
-                            'duration': self._format_duration(video.get('length', '')),
-                            'pubdate': video.get('created', 0),
-                            'downloaded': 'False',
-                            'file_path': '',
-                            'error_info': ''
-                        }
-                        videos.append(video_info)
-
-                    print(f"📄 备用API已获取第{page}页，共{len(vlist)}个视频")
-
-                    if len(vlist) < 25:
-                        break
-
-                    page += 1
-                    await asyncio.sleep(2)  # 更长的延迟
-
-        except Exception as e:
-            print(f"❌ 备用API异常: {e}")
-
-        return videos
 
     def _format_duration(self, length_str: str) -> str:
         """格式化视频时长"""
