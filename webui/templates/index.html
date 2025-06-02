@@ -1835,8 +1835,9 @@
             }, 3000);
         }
 
-        socket.on('parallel_progress', function(data) {
-            console.log('📊 收到进度更新:', {
+        // 统一的进度处理函数
+        function handleProgressUpdate(data) {
+            console.log('📊 处理进度更新:', {
                 source: data.source,
                 taskCount: Object.keys(data.tasks).length,
                 overallProgress: data.overall.overall_progress
@@ -1909,6 +1910,11 @@
                 // 更新任务列表
                 updateTaskList(tasks);
             }
+        }
+
+        // WebSocket事件监听器
+        socket.on('parallel_progress', function(data) {
+            handleProgressUpdate(data);
         });
 
         socket.on('error', function(data) {
@@ -1933,64 +1939,12 @@
 
                 // 继续接收进度更新
                 if (data.overall && data.tasks) {
-                    // 模拟parallel_progress事件来更新进度显示
-                    const progressData = {
+                    // 直接调用进度处理函数
+                    handleProgressUpdate({
                         source: source,
                         overall: data.overall,
                         tasks: data.tasks
-                    };
-
-                    // 触发parallel_progress事件处理逻辑
-                    const overall = progressData.overall;
-                    const tasks = progressData.tasks;
-                    const source_type = progressData.source || 'parallel';
-
-                    // 检查是否是单个下载（只有一个任务）
-                    const taskIds = Object.keys(tasks);
-                    if (taskIds.length === 1 && source_type === 'single') {
-                        // 这是单个下载，更新单个下载进度
-                        const taskId = taskIds[0];
-                        const task = tasks[taskId];
-
-                        // 格式化状态文本，包含多P信息
-                        let statusText = `${task.title} - ${getStatusText(task.status)}`;
-                        if (task.is_multi_p && task.current_part) {
-                            const currentPart = task.current_part.index;
-                            const totalParts = task.total_pages;
-                            statusText += ` (分P: ${currentPart}/${totalParts})`;
-                        }
-
-                        updateSingleProgress(
-                            task.progress_percentage,
-                            statusText,
-                            `${task.download_speed.toFixed(1)} MB/s`
-                        );
-                    } else if (source_type === 'precise') {
-                        // 这是精准并行下载，更新精准下载进度
-                        updatePreciseProgress(
-                            overall.overall_progress,
-                            `${overall.completed_tasks}/${overall.total_tasks} 完成`,
-                            `${overall.total_speed.toFixed(1)} MB/s`
-                        );
-
-                        // 更新精准任务列表
-                        updatePreciseTaskList(tasks);
-                    } else {
-                        // 这是普通并行下载，更新并行进度
-                        // 计算基于任务数量的进度（类似UP主管理页面）
-                        const completedTasks = overall.completed_tasks + overall.failed_tasks;
-                        const totalTasks = overall.total_tasks;
-                        const taskProgress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
-
-                        updateParallelProgress(
-                            taskProgress,
-                            `${completedTasks}/${totalTasks} 任务完成`,
-                            `${overall.total_speed.toFixed(1)} MB/s`
-                        );
-
-                        // 更新任务列表
-                        updateTaskList(tasks);
-                    }
+                    });
                 }
             } else {
                 console.log(`ℹ️ ${source} 分栏没有活跃任务，重置界面状态`);
@@ -2062,6 +2016,10 @@
                 if (preciseTaskList) {
                     preciseTaskList.innerHTML = '';
                 }
+            } else if (source.startsWith('uploader_')) {
+                // 重置UP主下载界面
+                console.log(`🔄 重置UP主下载界面: ${source}`);
+                unlockUploaderInterface();
             }
         }
 
@@ -2117,6 +2075,29 @@
                 // 更新精准任务列表
                 if (data.tasks) {
                     updatePreciseTaskList(data.tasks);
+                }
+            } else if (source.startsWith('uploader_')) {
+                // 恢复UP主下载状态
+                console.log(`🔄 恢复UP主下载状态: ${source}`);
+
+                if (data.overall) {
+                    // 计算基于视频数量的进度
+                    const completedVideos = data.overall.completed_tasks + data.overall.failed_tasks;
+                    const totalVideos = data.overall.total_tasks;
+                    const videoProgress = totalVideos > 0 ? (completedVideos / totalVideos) * 100 : 0;
+
+                    updateUploaderProgress(
+                        videoProgress,
+                        `${completedVideos}/${totalVideos} 视频完成`,
+                        `${data.overall.total_speed.toFixed(1)} MB/s`,
+                        source,
+                        data.overall
+                    );
+                }
+
+                // 更新UP主任务列表
+                if (data.tasks) {
+                    updateUploaderTaskList(data.tasks);
                 }
             }
 
@@ -3090,7 +3071,7 @@
             } else if (source === 'precise') {
                 // 解锁精准下载界面
                 unlockPreciseDownloadInterface();
-            } else if (source === 'uploader') {
+            } else if (source === 'uploader' || source.startsWith('uploader_')) {
                 // 解锁UP主管理界面
                 unlockUploaderInterface();
             }

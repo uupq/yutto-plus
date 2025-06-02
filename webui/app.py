@@ -1546,13 +1546,14 @@ def start_uploader_parallel_download(session_id, urls, config, action, user_dire
                 print(f"⚠️ 进度回调已设置，跳过重复设置")
                 return
 
-            # 重写下载器的进度回调方法
-            original_update_progress = downloader_instance._update_progress_display
+            # 保存原始的进度回调方法
+            if not hasattr(downloader_instance, '_original_update_progress'):
+                downloader_instance._original_update_progress = downloader_instance._update_progress_display
 
             def enhanced_update_progress():
                 try:
                     # 调用原始方法
-                    original_update_progress()
+                    downloader_instance._original_update_progress()
 
                     # 发送实时进度到前端
                     overall_progress = downloader_instance.get_overall_progress()
@@ -1631,6 +1632,19 @@ def start_uploader_parallel_download(session_id, urls, config, action, user_dire
             'source': f'uploader_{action}'  # 添加来源信息
         }, room=session_id)
 
+        # 恢复原始进度回调的函数
+        def restore_original_progress_callback():
+            """恢复下载器的原始进度回调方法"""
+            try:
+                if hasattr(downloader_instance, '_original_update_progress'):
+                    downloader_instance._update_progress_display = downloader_instance._original_update_progress
+                    delattr(downloader_instance, '_webui_callback_set')
+                    print(f"✅ 已恢复下载器的原始进度回调方法")
+                else:
+                    print(f"⚠️ 没有找到原始进度回调方法")
+            except Exception as e:
+                print(f"❌ 恢复原始进度回调时出错: {e}")
+
         # 在后台监控完成状态
         def monitor_completion():
             while True:
@@ -1638,7 +1652,9 @@ def start_uploader_parallel_download(session_id, urls, config, action, user_dire
                 queue_status = downloader_instance.task_manager.get_queue_status()
 
                 if queue_status['running'] == 0 and queue_status['pending'] == 0:
-                    # 所有任务完成
+                    # 所有任务完成，恢复原始进度回调
+                    restore_original_progress_callback()
+
                     final_status = downloader_instance.task_manager.get_queue_status()
                     tasks_info = downloader_instance.get_tasks_summary_info()
 
@@ -1657,6 +1673,18 @@ def start_uploader_parallel_download(session_id, urls, config, action, user_dire
 
     except Exception as e:
         print(f'❌ [错误] 启动UP主{action}下载时出错: {e}')
+
+        # 如果出错，也要恢复原始进度回调
+        try:
+            if session_id in active_downloads:
+                downloader_instance = active_downloads[session_id]['downloader']
+                if hasattr(downloader_instance, '_original_update_progress'):
+                    downloader_instance._update_progress_display = downloader_instance._original_update_progress
+                    delattr(downloader_instance, '_webui_callback_set')
+                    print(f"✅ 错误处理中已恢复下载器的原始进度回调方法")
+        except Exception as restore_error:
+            print(f"❌ 错误处理中恢复原始进度回调时出错: {restore_error}")
+
         socketio.emit('uploader_error', {
             'message': f'启动{action}下载失败: {str(e)}'
         }, room=session_id)
