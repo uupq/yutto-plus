@@ -1198,12 +1198,7 @@
 
         // 连接状态管理
         socket.on('connect', function() {
-            console.log('🌐🌐🌐 [前端] WebSocket已连接 🌐🌐🌐');
-            console.log('🔍 [前端] Socket连接状态:', {
-                connected: socket.connected,
-                id: socket.id
-            });
-
+            console.log('🌐 WebSocket已连接');
             connectionStatus.textContent = '🟢 已连接';
             connectionStatus.className = 'connection-status connected';
             showAlert('WebSocket 连接成功', 'success');
@@ -1219,65 +1214,16 @@
         });
 
         socket.on('disconnect', function() {
-            console.log('❌❌❌ [前端] WebSocket连接断开 ❌❌❌');
+            console.log('❌ WebSocket连接断开');
         });
 
         socket.on('connect_error', function(error) {
-            console.log('🚫🚫🚫 [前端] WebSocket连接错误 🚫🚫🚫:', error);
+            console.log('🚫 WebSocket连接错误:', error);
         });
 
-        // 添加通用事件监听器来监控所有接收到的事件
-        socket.onAny(function(event, ...args) {
-            console.log(`📡📡📡 [前端] 收到事件: ${event} 📡📡📡`, args);
-            if (event === 'parallel_download_complete') {
-                console.log('🎯🎯🎯 [前端] 这是我们要找的事件！🎯🎯🎯');
-                alert(`🎯 收到关键事件: ${event}`);
-            }
-        });
 
-        // 监控按钮状态变化
-        function monitorButtonChanges() {
-            const btn = parallelDownloadBtn;
-            let lastDisabled = btn.disabled;
-            let lastTextContent = btn.textContent;
 
-            // 使用MutationObserver监控DOM变化
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'attributes' && mutation.attributeName === 'disabled') {
-                        const newDisabled = btn.disabled;
-                        if (newDisabled !== lastDisabled) {
-                            console.log(`🔧🔧🔧 [按钮监控] disabled属性变化: ${lastDisabled} → ${newDisabled}`);
-                            alert(`🔧 按钮disabled变化: ${lastDisabled} → ${newDisabled}`);
-                            lastDisabled = newDisabled;
-                        }
-                    } else if (mutation.type === 'childList' || (mutation.type === 'characterData')) {
-                        const newTextContent = btn.textContent;
-                        if (newTextContent !== lastTextContent) {
-                            console.log(`📝📝📝 [按钮监控] textContent变化: "${lastTextContent}" → "${newTextContent}"`);
-                            alert(`📝 按钮文本变化: "${lastTextContent}" → "${newTextContent}"`);
-                            lastTextContent = newTextContent;
-                        }
-                    }
-                });
-            });
 
-            // 监控属性和子节点变化
-            observer.observe(btn, {
-                attributes: true,
-                attributeFilter: ['disabled'],
-                childList: true,
-                subtree: true,
-                characterData: true
-            });
-
-            console.log('👁️ 按钮变化监控已启动');
-        }
-
-        // 启动按钮监控
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(monitorButtonChanges, 1000);
-        });
 
         // 获取当前激活的分栏
         function getCurrentActiveTab() {
@@ -1343,22 +1289,15 @@
 
         // 检查指定分栏的活跃任务
         function checkActiveTasksForTab(tabName) {
-            console.log(`🔍🔍🔍 [前端] 检查 ${tabName} 分栏的活跃任务 🔍🔍🔍`);
-            console.log(`🔍 [前端] 当前状态:`, {
-                activeDownload: activeDownload,
-                tabName: tabName,
-                parallelBtnDisabled: parallelDownloadBtn.disabled,
-                parallelBtnText: parallelDownloadBtn.textContent
-            });
+            console.log(`🔍 检查 ${tabName} 分栏的活跃任务`);
 
             // 检查是否刚刚完成下载，如果是则延迟检查
             const recentlyCompletedKey = `recently_completed_${tabName}`;
             if (window[recentlyCompletedKey]) {
-                console.log(`⏳ [前端] ${tabName} 分栏刚完成下载，跳过活跃任务检查`);
+                console.log(`⏳ ${tabName} 分栏刚完成下载，跳过活跃任务检查`);
                 return;
             }
 
-            console.log(`📤 [前端] 发送 check_active_tasks 请求: ${tabName}`);
             socket.emit('check_active_tasks', {
                 source: tabName  // 'single', 'parallel', 'precise'
             });
@@ -1414,29 +1353,14 @@
                 return;
             }
 
-            console.log('🔍 [前端] 并行下载表单提交检查:', {
-                activeDownload: activeDownload,
-                parallelBtnDisabled: parallelDownloadBtn.disabled,
-                parallelBtnText: parallelDownloadBtn.textContent
-            });
-
             if (activeDownload) {
-                console.log('🚫 [前端] 阻止并行下载：activeDownload =', activeDownload);
                 showAlert('有下载任务正在进行，请等待完成', 'error');
                 return;
             }
 
-            console.log('✅ [前端] 允许并行下载：activeDownload =', activeDownload);
             activeDownload = true;
-            console.log('🔄 [前端] 设置 activeDownload = true');
-
-            console.log('🔧 [前端] 表单提交 - 设置按钮为禁用状态');
             parallelDownloadBtn.disabled = true;
             parallelDownloadBtn.textContent = `📋 准备下载 ${urls.length} 个任务...`;
-            console.log('🔍 [前端] 表单提交后按钮状态:', {
-                disabled: parallelDownloadBtn.disabled,
-                textContent: parallelDownloadBtn.textContent
-            });
             parallelStatus.classList.remove('hidden');
             
             updateParallelProgress(0, `准备下载 ${urls.length} 个任务...`, '-');
@@ -1790,12 +1714,7 @@
             if (source === 'single') {
                 singleDownloadBtn.textContent = '下载中...';
             } else if (source === 'parallel') {
-                console.log('🔧 [前端] parallel_download_started - 设置按钮文本为"下载中..."');
                 parallelDownloadBtn.textContent = '下载中...';
-                console.log('🔍 [前端] parallel_download_started后按钮状态:', {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
             } else if (source === 'precise') {
                 preciseDownloadBtn.textContent = '下载中...';
             }
@@ -1811,39 +1730,20 @@
         });
 
         socket.on('parallel_download_complete', function(data) {
-            console.log('🎉🎉🎉 [前端] 收到下载完成事件 🎉🎉🎉');
-            console.log('📥 [前端] 事件数据:', data);
+            const final = data.final_status;
+            const source = data.source || 'parallel';
 
-            // 添加弹窗确认收到事件
-            alert('🎉 [前端调试] 收到 parallel_download_complete 事件！');
-
-            try {
-                console.log('🔍 [前端] 步骤1: 开始解析事件数据');
-                const final = data.final_status;
-                const source = data.source || 'parallel';
-                alert(`📊 步骤1完成: source=${source}, completed=${final.completed}`);
-
-                console.log('🔍 [前端] 步骤2: 当前按钮状态:', {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
-                alert(`🔍 步骤2: 按钮状态 disabled=${parallelDownloadBtn.disabled}, text="${parallelDownloadBtn.textContent}"`);
-
-                console.log('🔍 [前端] 步骤3: 准备调用unlockDownloadInterface');
-                alert('🔍 步骤3: 准备调用unlockDownloadInterface');
-
-                unlockDownloadInterface(source);
-
-                alert('✅ 步骤4: unlockDownloadInterface调用完成');
-                console.log('🔍 [前端] 步骤4: unlockDownloadInterface调用完成，检查按钮状态:', {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
-
-            } catch (error) {
-                console.error('❌ [前端] 事件处理出错:', error);
-                alert(`❌ 事件处理出错: ${error.message}`);
+            // 显示完成消息
+            if (final.failed > 0 && final.completed === 0) {
+                showAlert(`下载失败! 失败: ${final.failed}`, 'error');
+            } else if (final.failed > 0) {
+                showAlert(`下载完成! 成功: ${final.completed}, 失败: ${final.failed}`, 'info');
+            } else {
+                showAlert(`下载完成! 成功下载 ${final.completed} 个视频`, 'success');
             }
+
+            // 解锁对应的界面
+            unlockDownloadInterface(source);
 
 
 
@@ -2020,24 +1920,15 @@
 
         // 处理活跃任务查询结果
         socket.on('active_tasks_result', function(data) {
-            console.log('📊📊📊 [前端] 收到活跃任务查询结果 📊📊📊:', data);
+            console.log('📊 收到活跃任务查询结果:', data);
 
             const source = data.source;
             const hasActiveTasks = data.has_active_tasks;
 
-            console.log(`🔍 [前端] 活跃任务查询结果:`, {
-                source: source,
-                hasActiveTasks: hasActiveTasks,
-                currentActiveDownload: activeDownload,
-                parallelBtnDisabled: parallelDownloadBtn.disabled,
-                parallelBtnText: parallelDownloadBtn.textContent
-            });
-
             if (hasActiveTasks) {
-                console.log(`✅ [前端] 发现 ${source} 分栏有活跃任务，恢复显示`);
+                console.log(`✅ 发现 ${source} 分栏有活跃任务，恢复显示`);
 
                 // 恢复对应分栏的下载状态
-                console.log(`🔄 [前端] 调用 restoreDownloadStateForSource(${source})`);
                 restoreDownloadStateForSource(source, data);
 
                 // 继续接收进度更新
@@ -2130,13 +2021,8 @@
 
             } else if (source === 'parallel') {
                 // 重置并行下载界面
-                console.log('🔧 [前端] resetTabState - 重置并行下载按钮');
                 parallelDownloadBtn.disabled = false;
                 parallelDownloadBtn.textContent = '🚀 开始并行下载';
-                console.log('🔍 [前端] resetTabState后按钮状态:', {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
                 parallelStatus.classList.add('hidden');
 
                 // 解锁输入框
@@ -2181,15 +2067,7 @@
 
         // 恢复指定来源的下载状态
         function restoreDownloadStateForSource(source, data) {
-            console.log(`🔄🔄🔄 [前端] 恢复 ${source} 下载状态 🔄🔄🔄`);
-            console.log(`🔍 [前端] 恢复前状态:`, {
-                activeDownload: activeDownload,
-                parallelBtnDisabled: parallelDownloadBtn.disabled,
-                parallelBtnText: parallelDownloadBtn.textContent
-            });
-
             activeDownload = true;
-            console.log(`🔄 [前端] 设置 activeDownload = true`);
 
             if (source === 'single') {
                 singleDownloadBtn.disabled = true;
@@ -2207,20 +2085,9 @@
                     );
                 }
             } else if (source === 'parallel') {
-                console.log(`🔧 [前端] 恢复并行下载状态 - 设置按钮为禁用`);
-                console.log(`🔍 [前端] 设置前按钮状态:`, {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
-
                 parallelDownloadBtn.disabled = true;
                 parallelDownloadBtn.textContent = '下载中...';
                 parallelStatus.classList.remove('hidden');
-
-                console.log(`🔍 [前端] 设置后按钮状态:`, {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
 
                 if (data.overall) {
                     // 计算基于任务数量的进度（类似UP主管理页面）
@@ -2258,7 +2125,6 @@
 
         // 重置下载按钮状态
         function resetDownloadButtons() {
-            console.log('🔧 [前端] resetDownloadButtons - 重置所有下载按钮');
             activeDownload = false;
             singleDownloadBtn.disabled = false;
             singleDownloadBtn.textContent = '🚀 开始下载';
@@ -2266,10 +2132,6 @@
             parallelDownloadBtn.textContent = '🚀 开始并行下载';
             preciseDownloadBtn.disabled = false;
             preciseDownloadBtn.textContent = '🚀 开始精准下载';
-            console.log('🔍 [前端] resetDownloadButtons后按钮状态:', {
-                disabled: parallelDownloadBtn.disabled,
-                textContent: parallelDownloadBtn.textContent
-            });
 
             // 隐藏进度条（延迟3秒）
             setTimeout(() => {
@@ -3141,16 +3003,7 @@
 
         // 统一的下载界面解锁函数
         function unlockDownloadInterface(source) {
-            console.log(`🔓🔓🔓 [前端] 开始解锁 ${source} 下载界面 🔓🔓🔓`);
-            console.log('🔍 [前端] 解锁前状态:', {
-                activeDownload: activeDownload,
-                parallelBtn: parallelDownloadBtn.textContent,
-                parallelDisabled: parallelDownloadBtn.disabled,
-                parallelBtnElement: parallelDownloadBtn
-            });
-
             // 重置全局下载状态
-            console.log(`🔄 [前端] 设置 activeDownload = false (之前: ${activeDownload})`);
             activeDownload = false;
 
             if (source === 'single') {
@@ -3188,15 +3041,6 @@
 
             } else if (source === 'parallel') {
                 // 解锁并行下载界面
-                console.log('🔄 [前端] 开始解锁并行下载界面');
-                console.log('🔍 [前端] 解锁前状态:', {
-                    activeDownload: activeDownload,
-                    parallelBtnDisabled: parallelDownloadBtn.disabled,
-                    parallelBtnText: parallelDownloadBtn.textContent,
-                    parallelBtnElement: parallelDownloadBtn
-                });
-
-                console.log('🔧 [前端] 开始修改DOM元素...');
 
                 const parallelUrls = document.getElementById('parallelUrls');
                 if (parallelUrls) {
@@ -3229,52 +3073,8 @@
                     console.warn('⚠️ parallelConcurrent 元素未找到');
                 }
 
-                console.log('🔧 [前端] 准备修改按钮状态...');
-                console.log('🔍 [前端] 修改前按钮状态:', {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
-
                 parallelDownloadBtn.disabled = false;
                 parallelDownloadBtn.textContent = '🚀 开始并行下载';
-
-                console.log('🔍 [前端] 修改后按钮状态:', {
-                    disabled: parallelDownloadBtn.disabled,
-                    textContent: parallelDownloadBtn.textContent
-                });
-
-                console.log('🔍 解锁后状态:', {
-                    parallelBtn: parallelDownloadBtn.textContent,
-                    parallelDisabled: parallelDownloadBtn.disabled,
-                    activeDownload: activeDownload
-                });
-
-                // 强制检查并修复按钮状态
-                setTimeout(() => {
-                    console.log('🔍 [前端] 强制检查按钮状态 (100ms后):', {
-                        disabled: parallelDownloadBtn.disabled,
-                        textContent: parallelDownloadBtn.textContent,
-                        expected: '🚀 开始并行下载'
-                    });
-
-                    if (parallelDownloadBtn.disabled || parallelDownloadBtn.textContent !== '🚀 开始并行下载') {
-                        console.log('⚠️ [前端] 检测到按钮状态异常，强制修复');
-                        console.log('🔧 [前端] 异常状态:', {
-                            disabled: parallelDownloadBtn.disabled,
-                            textContent: parallelDownloadBtn.textContent
-                        });
-
-                        parallelDownloadBtn.disabled = false;
-                        parallelDownloadBtn.textContent = '🚀 开始并行下载';
-
-                        console.log('✅ [前端] 按钮状态已强制修复:', {
-                            disabled: parallelDownloadBtn.disabled,
-                            textContent: parallelDownloadBtn.textContent
-                        });
-                    } else {
-                        console.log('✅ [前端] 按钮状态正常，无需修复');
-                    }
-                }, 100);
 
                 // 清空任务列表
                 const taskList = document.getElementById('taskList');

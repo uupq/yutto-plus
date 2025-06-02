@@ -986,11 +986,6 @@ def handle_parallel_download_request(data):
                     source = active_downloads[session_id].get('source', 'parallel')
                     cleanup_session_tasks(session_id, source)
 
-                    print(f'📤 [发送事件] 准备发送 parallel_download_complete 事件到会话 {session_id}')
-                    print(f'📤 [事件数据] final_status: {final_status}')
-                    print(f'📤 [事件数据] source: {source}')
-                    print(f'📤 [事件数据] session_id: {session_id}')
-
                     socketio.emit('parallel_download_complete', {
                         'final_status': final_status,
                         'tasks_info': tasks_info,
@@ -998,7 +993,6 @@ def handle_parallel_download_request(data):
                         'source': source
                     }, room=session_id)
 
-                    print(f'✅ [事件已发送] parallel_download_complete 事件已发送到会话 {session_id}')
                     print(f'🎉 [完成] 会话 {session_id} 并行下载完成')
                     break
         
@@ -1039,20 +1033,18 @@ def handle_check_active_tasks(data):
     session_id = request.sid
     source = data.get('source', 'single')  # 'single', 'parallel', 'precise'
 
-    print(f"🔍🔍🔍 [后端] 检查活跃任务: 会话={session_id}, 来源={source} 🔍🔍🔍")
+    print(f"🔍 检查活跃任务: 会话={session_id}, 来源={source}")
 
     # 获取指定来源的活跃任务
     active_tasks = get_active_tasks_by_source(source)
-    print(f"📊 [后端] 持久化任务查询结果: {active_tasks}")
 
     if not active_tasks:
-        print(f"ℹ️ [后端] 没有找到来源为 {source} 的活跃任务")
+        print(f"ℹ️ 没有找到来源为 {source} 的活跃任务")
         emit('active_tasks_result', {
             'source': source,
             'has_active_tasks': False,
             'tasks': {}
         })
-        print(f"📤 [后端] 已发送 has_active_tasks=False 到前端")
         return
 
     # 检查这些任务是否还在运行
@@ -1079,7 +1071,6 @@ def handle_check_active_tasks(data):
                     }
 
             if running_tasks:
-                print(f"✅ [后端] 找到 {len(running_tasks)} 个运行中的任务")
                 # 发送任务信息和当前进度
                 emit('active_tasks_result', {
                     'source': source,
@@ -1095,7 +1086,6 @@ def handle_check_active_tasks(data):
                     },
                     'tasks': running_tasks
                 })
-                print(f"📤 [后端] 已发送 has_active_tasks=True 到前端")
 
                 # 启动定期进度更新（为刷新后的客户端）
                 def send_periodic_updates():
@@ -1144,10 +1134,9 @@ def handle_check_active_tasks(data):
                 # 在后台线程中启动定期更新
                 threading.Thread(target=send_periodic_updates, daemon=True).start()
             else:
-                print(f"ℹ️ [后端] {source} 任务已完成或不再运行")
+                print(f"ℹ️ {source} 任务已完成或不再运行")
                 # 标记任务为已完成
                 for task_id in active_tasks.keys():
-                    print(f"🧹 [后端] 标记任务 {task_id} 为已完成")
                     mark_task_completed(task_id)
 
                 emit('active_tasks_result', {
@@ -1155,7 +1144,6 @@ def handle_check_active_tasks(data):
                     'has_active_tasks': False,
                     'tasks': {}
                 })
-                print(f"📤 [后端] 已发送 has_active_tasks=False 到前端 (任务已完成)")
 
         except Exception as e:
             print(f"❌ 检查任务状态失败: {e}")
