@@ -911,9 +911,9 @@
                     <div id="uploaderVideoListContent"></div>
                 </div>
 
-                <!-- 文件夹选择区域（删除功能专用） -->
+                <!-- 文件夹选择区域（删除/更新功能共用） -->
                 <div id="uploaderFolderSelection" style="display: none;">
-                    <h4 style="margin-bottom: 15px; color: #dc3545;">🗑️ 选择要删除的UP主文件夹</h4>
+                    <h4 id="folderSelectionTitle" style="margin-bottom: 15px; color: #dc3545;">🗑️ 选择要删除的UP主文件夹</h4>
 
                     <!-- 筛选和全选控制 -->
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
@@ -955,7 +955,7 @@
 
                     <!-- 操作按钮 -->
                     <div style="display: flex; gap: 15px; justify-content: center;">
-                        <button type="button" class="btn" onclick="confirmDeleteSelectedFolders()" style="background: #dc3545; color: white;">
+                        <button type="button" id="confirmActionBtn" class="btn" onclick="confirmSelectedFoldersAction()" style="background: #dc3545; color: white;">
                             🗑️ 删除选中的文件夹
                         </button>
                         <button type="button" class="btn" onclick="cancelFolderSelection()" style="background: #6c757d; color: white;">
@@ -2713,25 +2713,44 @@
 
         // UP主更新
         function uploaderUpdate() {
-            const uploader = document.getElementById('uploaderInput').value.trim();
-            if (!uploader) {
-                alert('请输入UP主UID或空间URL');
-                return;
+            // 首先让用户选择要更新的目录
+            let updateDir = document.getElementById('uploaderOutputDir').value.trim();
+            const config = document.getElementById('uploaderConfig').value;
+
+            // 如果没有指定目录，提示用户输入
+            if (!updateDir) {
+                // 尝试从配置文件获取默认路径
+                let defaultPath = '';
+                if (config && currentConfig) {
+                    defaultPath = currentConfig.output_dir || '';
+                } else {
+                    defaultPath = '~/Downloads/upper';
+                }
+
+                updateDir = prompt(
+                    '请输入要扫描UP主文件夹的目录路径：\n\n' +
+                    '这个目录下应该包含UP主文件夹（格式：UID-用户名）\n' +
+                    '例如：~/Downloads/upper 或 /path/to/bilibili/downloads',
+                    defaultPath
+                );
+
+                if (!updateDir || !updateDir.trim()) {
+                    alert('更新操作已取消：未指定目录路径');
+                    return;
+                }
+
+                updateDir = updateDir.trim();
             }
 
-            showUploaderStatus('🔄 更新视频列表', '正在检查新投稿...');
-
-            const config = document.getElementById('uploaderConfig').value;
-            const outputDir = document.getElementById('uploaderOutputDir').value.trim();
+            // 扫描文件夹并显示选择界面
+            showUploaderStatus('🔍 扫描UP主文件夹', `正在扫描目录：${updateDir}`);
 
             const data = {
-                uploader: uploader,
-                action: 'update',
+                action: 'scan_folders_for_update',
                 config: config || null,
-                output_dir: outputDir || null
+                output_dir: updateDir
             };
 
-            lockUploaderInterface();
             socket.emit('uploader_action', data);
         }
 
@@ -2805,11 +2824,13 @@
         // 文件夹选择相关功能
         let allFolders = [];
         let selectedFolders = new Set();
+        let currentFolderAction = 'delete'; // 'delete' 或 'update'
 
         // 显示文件夹选择界面
-        function showFolderSelection(folders, scanDir) {
+        function showFolderSelection(folders, scanDir, actionType = 'delete') {
             allFolders = folders;
             selectedFolders.clear();
+            currentFolderAction = actionType;
 
             // 隐藏其他区域，显示文件夹选择区域
             document.getElementById('uploaderStatus').style.display = 'none';
@@ -2819,6 +2840,22 @@
 
             // 存储扫描目录
             document.getElementById('uploaderFolderSelection').dataset.scanDir = scanDir;
+
+            // 根据操作类型更新界面
+            const titleElement = document.getElementById('folderSelectionTitle');
+            const confirmBtn = document.getElementById('confirmActionBtn');
+
+            if (actionType === 'update') {
+                titleElement.textContent = '🔄 选择要更新的UP主文件夹';
+                titleElement.style.color = '#007bff';
+                confirmBtn.innerHTML = '🔄 更新选中的文件夹';
+                confirmBtn.style.background = '#007bff';
+            } else {
+                titleElement.textContent = '🗑️ 选择要删除的UP主文件夹';
+                titleElement.style.color = '#dc3545';
+                confirmBtn.innerHTML = '🗑️ 删除选中的文件夹';
+                confirmBtn.style.background = '#dc3545';
+            }
 
             // 渲染文件夹列表
             renderFolderList();
@@ -2944,45 +2981,75 @@
             document.getElementById('totalFolderCount').textContent = totalCount;
         }
 
-        // 确认删除选中的文件夹
-        function confirmDeleteSelectedFolders() {
+        // 确认对选中文件夹执行操作
+        function confirmSelectedFoldersAction() {
             if (selectedFolders.size === 0) {
-                alert('请至少选择一个文件夹进行删除');
+                const actionText = currentFolderAction === 'update' ? '更新' : '删除';
+                alert(`请至少选择一个文件夹进行${actionText}`);
                 return;
             }
 
             const selectedFolderList = Array.from(selectedFolders).map(index => allFolders[index]);
             const folderNames = selectedFolderList.map(f => f.name).join('\n• ');
 
-            if (!confirm(`⚠️ 警告：即将删除以下 ${selectedFolders.size} 个UP主文件夹中的视频文件：\n\n• ${folderNames}\n\n` +
-                        `• 会删除：所有视频文件、字幕文件、封面图片、子文件夹\n` +
-                        `• 会保留：video_urls.csv 记录文件\n\n` +
-                        `确定要继续吗？`)) {
-                return;
+            if (currentFolderAction === 'update') {
+                // 更新操作确认
+                if (!confirm(`🔄 确认更新以下 ${selectedFolders.size} 个UP主文件夹的视频列表：\n\n• ${folderNames}\n\n` +
+                            `• 会检查新投稿的视频\n` +
+                            `• 会下载新发现的视频\n` +
+                            `• 会更新 video_urls.csv 记录文件\n\n` +
+                            `确定要继续吗？`)) {
+                    return;
+                }
+
+                // 隐藏文件夹选择界面，显示状态
+                document.getElementById('uploaderFolderSelection').style.display = 'none';
+                showUploaderStatus('🔄 更新视频列表', `正在更新 ${selectedFolders.size} 个文件夹的视频列表...`);
+
+                const scanDir = document.getElementById('uploaderFolderSelection').dataset.scanDir;
+                const selectedPaths = selectedFolderList.map(f => f.path);
+
+                const data = {
+                    action: 'update_selected',
+                    scan_dir: scanDir,
+                    selected_paths: selectedPaths
+                };
+
+                lockUploaderInterface();
+                socket.emit('uploader_action', data);
+
+            } else {
+                // 删除操作确认
+                if (!confirm(`⚠️ 警告：即将删除以下 ${selectedFolders.size} 个UP主文件夹中的视频文件：\n\n• ${folderNames}\n\n` +
+                            `• 会删除：所有视频文件、字幕文件、封面图片、子文件夹\n` +
+                            `• 会保留：video_urls.csv 记录文件\n\n` +
+                            `确定要继续吗？`)) {
+                    return;
+                }
+
+                // 最终确认
+                const confirmText = prompt('请输入"确认删除"来最终确认操作：');
+                if (confirmText !== '确认删除') {
+                    alert('删除操作已取消：确认文字不正确');
+                    return;
+                }
+
+                // 隐藏文件夹选择界面，显示状态
+                document.getElementById('uploaderFolderSelection').style.display = 'none';
+                showUploaderStatus('🗑️ 删除视频文件', `正在删除 ${selectedFolders.size} 个文件夹中的视频文件...`);
+
+                const scanDir = document.getElementById('uploaderFolderSelection').dataset.scanDir;
+                const selectedPaths = selectedFolderList.map(f => f.path);
+
+                const data = {
+                    action: 'delete_selected',
+                    scan_dir: scanDir,
+                    selected_paths: selectedPaths
+                };
+
+                lockUploaderInterface();
+                socket.emit('uploader_action', data);
             }
-
-            // 最终确认
-            const confirmText = prompt('请输入"确认删除"来最终确认操作：');
-            if (confirmText !== '确认删除') {
-                alert('删除操作已取消：确认文字不正确');
-                return;
-            }
-
-            // 隐藏文件夹选择界面，显示状态
-            document.getElementById('uploaderFolderSelection').style.display = 'none';
-            showUploaderStatus('🗑️ 删除视频文件', `正在删除 ${selectedFolders.size} 个文件夹中的视频文件...`);
-
-            const scanDir = document.getElementById('uploaderFolderSelection').dataset.scanDir;
-            const selectedPaths = selectedFolderList.map(f => f.path);
-
-            const data = {
-                action: 'delete_selected',
-                scan_dir: scanDir,
-                selected_paths: selectedPaths
-            };
-
-            lockUploaderInterface();
-            socket.emit('uploader_action', data);
         }
 
         // 取消文件夹选择
@@ -3084,10 +3151,22 @@
             }, 3000);
         });
 
-        // 文件夹扫描结果
+        // 文件夹扫描结果（删除操作）
         socket.on('uploader_folders_scanned', function(data) {
             if (data.success) {
-                showFolderSelection(data.folders, data.scan_dir);
+                showFolderSelection(data.folders, data.scan_dir, 'delete');
+            } else {
+                showUploaderStatus('❌ 扫描失败', data.message);
+                setTimeout(() => {
+                    unlockUploaderInterface();
+                }, 3000);
+            }
+        });
+
+        // 文件夹扫描结果（更新操作）
+        socket.on('uploader_folders_scanned_for_update', function(data) {
+            if (data.success) {
+                showFolderSelection(data.folders, data.scan_dir, 'update');
             } else {
                 showUploaderStatus('❌ 扫描失败', data.message);
                 setTimeout(() => {

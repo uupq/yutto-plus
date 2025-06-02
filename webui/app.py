@@ -1163,11 +1163,17 @@ def handle_uploader_action(data):
             # 删除操作（旧版本，保留兼容性）
             handle_uploader_delete_action(session_id, config_file, output_dir)
         elif action == 'scan_folders':
-            # 扫描文件夹操作
+            # 扫描文件夹操作（删除）
             handle_uploader_scan_folders(session_id, config_file, output_dir)
+        elif action == 'scan_folders_for_update':
+            # 扫描文件夹操作（更新）
+            handle_uploader_scan_folders_for_update(session_id, config_file, output_dir)
         elif action == 'delete_selected':
             # 删除选中的文件夹
             handle_uploader_delete_selected(session_id, data)
+        elif action == 'update_selected':
+            # 更新选中的文件夹
+            handle_uploader_update_selected(session_id, data)
         elif action in ['download', 'update', 'list']:
             # 下载、更新、列表操作
             handle_uploader_video_action(session_id, action, uploader, config_file, output_dir)
@@ -1476,6 +1482,200 @@ def handle_uploader_delete_selected(session_id, data):
 
     # 在后台线程中运行
     threading.Thread(target=run_delete, daemon=True).start()
+
+def handle_uploader_scan_folders_for_update(session_id, config_file, output_dir):
+    """扫描UP主文件夹（更新操作）"""
+    import os
+    import re
+    import threading
+
+    def run_scan():
+        try:
+            # 获取扫描目录
+            scan_dir = output_dir
+            if not scan_dir and config_file:
+                # 从配置文件获取
+                config_path = Path(__file__).parent.parent / 'configs' / config_file
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f)
+                        scan_dir = config.get('output_dir', '~/Downloads/upper')
+
+            if not scan_dir:
+                scan_dir = '~/Downloads/upper'
+
+            # 展开路径
+            abs_path = Path(scan_dir).expanduser().resolve()
+
+            if not abs_path.exists() or not abs_path.is_dir():
+                socketio.emit('uploader_folders_scanned_for_update', {
+                    'success': False,
+                    'message': f'目录不存在或不是有效目录: {abs_path}'
+                }, room=session_id)
+                return
+
+            # 扫描符合条件的文件夹
+            folders = []
+            for item in abs_path.iterdir():
+                if item.is_dir():
+                    # 检查是否符合 UID-用户名 格式
+                    if re.match(r'^\d+-.*$', item.name):
+                        csv_file = item / "video_urls.csv"
+                        if csv_file.exists():
+                            # 统计文件信息
+                            file_count = 0
+                            total_size = 0
+
+                            try:
+                                for file_item in item.rglob("*"):
+                                    if file_item.is_file() and file_item.name.lower() != "video_urls.csv":
+                                        file_count += 1
+                                        total_size += file_item.stat().st_size
+
+                                # 格式化大小信息
+                                if total_size > 1024 * 1024 * 1024:
+                                    size_info = f"{total_size / (1024 * 1024 * 1024):.1f} GB"
+                                elif total_size > 1024 * 1024:
+                                    size_info = f"{total_size / (1024 * 1024):.1f} MB"
+                                else:
+                                    size_info = f"{total_size / 1024:.1f} KB"
+
+                            except Exception as e:
+                                file_count = 0
+                                size_info = "未知大小"
+
+                            folders.append({
+                                'name': item.name,
+                                'path': str(item),
+                                'file_count': file_count,
+                                'size_info': size_info
+                            })
+
+            # 按名称排序
+            folders.sort(key=lambda x: x['name'])
+
+            socketio.emit('uploader_folders_scanned_for_update', {
+                'success': True,
+                'folders': folders,
+                'scan_dir': str(abs_path)
+            }, room=session_id)
+
+        except Exception as e:
+            socketio.emit('uploader_folders_scanned_for_update', {
+                'success': False,
+                'message': f'扫描文件夹时出错: {str(e)}'
+            }, room=session_id)
+
+    # 在后台线程中运行
+    threading.Thread(target=run_scan, daemon=True).start()
+
+def handle_uploader_update_selected(session_id, data):
+    """更新选中的UP主文件夹"""
+    import subprocess
+    import threading
+
+    def run_update():
+        try:
+            selected_paths = data.get('selected_paths', [])
+            if not selected_paths:
+                socketio.emit('uploader_error', {
+                    'message': '没有选择要更新的文件夹'
+                }, room=session_id)
+                return
+
+            updated_folders = 0
+            error_count = 0
+
+            for folder_path in selected_paths:
+                try:
+                    folder = Path(folder_path)
+                    if not folder.exists() or not folder.is_dir():
+                        socketio.emit('uploader_progress', {
+                            'action': 'update_selected',
+                            'line': f'⚠️ 跳过不存在的文件夹: {folder.name}'
+                        }, room=session_id)
+                        continue
+
+                    # 从文件夹名称提取UID
+                    folder_name = folder.name
+                    uid_match = re.match(r'^(\d+)-.*$', folder_name)
+                    if not uid_match:
+                        socketio.emit('uploader_progress', {
+                            'action': 'update_selected',
+                            'line': f'⚠️ 跳过格式不正确的文件夹: {folder_name}'
+                        }, room=session_id)
+                        continue
+
+                    uid = uid_match.group(1)
+
+                    socketio.emit('uploader_progress', {
+                        'action': 'update_selected',
+                        'line': f'🔄 更新UP主: {folder_name} (UID: {uid})'
+                    }, room=session_id)
+
+                    # 构建更新命令
+                    cmd = ['python', 'yutto-plus-cli.py', '--uploader', uid, '--update-uploader', '-o', str(folder.parent)]
+
+                    # 运行更新命令
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        cwd=Path(__file__).parent.parent
+                    )
+
+                    # 实时读取输出
+                    while True:
+                        line = process.stdout.readline()
+                        if not line and process.poll() is not None:
+                            break
+                        if line:
+                            line = line.strip()
+                            if line:
+                                socketio.emit('uploader_progress', {
+                                    'action': 'update_selected',
+                                    'line': f'   {line}'
+                                }, room=session_id)
+
+                    # 等待进程完成
+                    process.wait()
+
+                    if process.returncode == 0:
+                        socketio.emit('uploader_progress', {
+                            'action': 'update_selected',
+                            'line': f'✅ {folder_name} 更新完成'
+                        }, room=session_id)
+                        updated_folders += 1
+                    else:
+                        socketio.emit('uploader_progress', {
+                            'action': 'update_selected',
+                            'line': f'❌ {folder_name} 更新失败'
+                        }, room=session_id)
+                        error_count += 1
+
+                except Exception as e:
+                    socketio.emit('uploader_progress', {
+                        'action': 'update_selected',
+                        'line': f'❌ 处理文件夹 {Path(folder_path).name} 时出错: {e}'
+                    }, room=session_id)
+                    error_count += 1
+
+            # 发送完成信息
+            socketio.emit('uploader_success', {
+                'action': 'update_selected',
+                'message': f'更新完成！成功更新 {updated_folders} 个文件夹' +
+                          (f'，遇到 {error_count} 个错误' if error_count > 0 else ''),
+                'output': f'更新统计：\n- 成功更新: {updated_folders}\n- 错误数量: {error_count}'
+            }, room=session_id)
+
+        except Exception as e:
+            socketio.emit('uploader_error', {
+                'message': f'更新操作出错: {str(e)}'
+            }, room=session_id)
+
+    # 在后台线程中运行
+    threading.Thread(target=run_update, daemon=True).start()
 
 def open_browser_delayed(url, delay=2):
     """延迟打开浏览器"""
