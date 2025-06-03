@@ -1956,9 +1956,11 @@ def handle_uploader_scan_folders_for_update(session_id, config_file, output_dir)
     threading.Thread(target=run_scan, daemon=True).start()
 
 def handle_uploader_update_selected(session_id, data):
-    """更新选中的UP主文件夹"""
-    import subprocess
+    """更新选中的UP主文件夹 - 使用接口实现三级进度条"""
+    import asyncio
     import threading
+    import re
+    import time
 
     def run_update():
         try:
@@ -1969,96 +1971,61 @@ def handle_uploader_update_selected(session_id, data):
                 }, room=session_id)
                 return
 
-            updated_folders = 0
-            error_count = 0
-
+            # 解析UP主信息
+            uploader_infos = []
             for folder_path in selected_paths:
                 try:
                     folder = Path(folder_path)
                     if not folder.exists() or not folder.is_dir():
-                        socketio.emit('uploader_progress', {
-                            'action': 'update_selected',
-                            'line': f'⚠️ 跳过不存在的文件夹: {folder.name}'
-                        }, room=session_id)
                         continue
 
-                    # 从文件夹名称提取UID
+                    # 从文件夹名称提取UID和用户名
                     folder_name = folder.name
-                    uid_match = re.match(r'^(\d+)-.*$', folder_name)
+                    uid_match = re.match(r'^(\d+)-(.+)$', folder_name)
                     if not uid_match:
-                        socketio.emit('uploader_progress', {
-                            'action': 'update_selected',
-                            'line': f'⚠️ 跳过格式不正确的文件夹: {folder_name}'
-                        }, room=session_id)
                         continue
 
-                    uid = uid_match.group(1)
+                    uid = int(uid_match.group(1))
+                    username = uid_match.group(2)
 
-                    socketio.emit('uploader_progress', {
-                        'action': 'update_selected',
-                        'line': f'🔄 更新UP主: {folder_name} (UID: {uid})'
-                    }, room=session_id)
-
-                    # 构建更新命令
-                    cmd = ['python', 'yutto-plus-cli.py', '--uploader', uid, '--update-uploader', '-o', str(folder.parent)]
-
-                    # 运行更新命令
-                    process = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        cwd=Path(__file__).parent.parent
-                    )
-
-                    # 跟踪进程
-                    if session_id not in active_uploader_processes:
-                        active_uploader_processes[session_id] = []
-                    active_uploader_processes[session_id].append(process)
-
-                    # 实时读取输出
-                    while True:
-                        line = process.stdout.readline()
-                        if not line and process.poll() is not None:
-                            break
-                        if line:
-                            line = line.strip()
-                            if line:
-                                socketio.emit('uploader_progress', {
-                                    'action': 'update_selected',
-                                    'line': f'   {line}'
-                                }, room=session_id)
-
-                    # 等待进程完成
-                    process.wait()
-
-                    if process.returncode == 0:
-                        socketio.emit('uploader_progress', {
-                            'action': 'update_selected',
-                            'line': f'✅ {folder_name} 更新完成'
-                        }, room=session_id)
-                        updated_folders += 1
-                    else:
-                        socketio.emit('uploader_progress', {
-                            'action': 'update_selected',
-                            'line': f'❌ {folder_name} 更新失败'
-                        }, room=session_id)
-                        error_count += 1
-
+                    uploader_infos.append({
+                        'uid': uid,
+                        'username': username,
+                        'folder_name': folder_name,
+                        'output_dir': folder.parent
+                    })
                 except Exception as e:
-                    socketio.emit('uploader_progress', {
-                        'action': 'update_selected',
-                        'line': f'❌ 处理文件夹 {Path(folder_path).name} 时出错: {e}'
-                    }, room=session_id)
-                    error_count += 1
+                    print(f"⚠️ 解析文件夹 {folder_path} 失败: {e}")
+                    continue
 
-            # 发送完成信息
-            socketio.emit('uploader_success', {
-                'action': 'update_selected',
-                'message': f'更新完成！成功更新 {updated_folders} 个文件夹' +
-                          (f'，遇到 {error_count} 个错误' if error_count > 0 else ''),
-                'output': f'更新统计：\n- 成功更新: {updated_folders}\n- 错误数量: {error_count}'
-            }, room=session_id)
+            if not uploader_infos:
+                socketio.emit('uploader_error', {
+                    'message': '没有找到有效的UP主文件夹'
+                }, room=session_id)
+                return
+
+            # 运行异步更新 - 使用更安全的方式
+            try:
+                # 尝试获取当前事件循环
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 如果当前循环正在运行，创建新的线程来运行异步任务
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, run_uploader_batch_update(session_id, uploader_infos))
+                            future.result()  # 等待完成
+                    else:
+                        # 如果当前循环没有运行，直接运行
+                        loop.run_until_complete(run_uploader_batch_update(session_id, uploader_infos))
+                except RuntimeError:
+                    # 没有事件循环，创建新的
+                    asyncio.run(run_uploader_batch_update(session_id, uploader_infos))
+            except Exception as e:
+                print(f"❌ 异步执行出错: {e}")
+                import traceback
+                print(f"详细错误信息: {traceback.format_exc()}")
+                raise
 
         except Exception as e:
             socketio.emit('uploader_error', {
@@ -2067,6 +2034,335 @@ def handle_uploader_update_selected(session_id, data):
 
     # 在后台线程中运行
     threading.Thread(target=run_update, daemon=True).start()
+
+
+async def run_uploader_batch_update(session_id, uploader_infos):
+    """运行批量UP主更新，带三级进度条"""
+    try:
+        import asyncio  # 确保导入asyncio
+
+        # 添加当前目录到Python路径
+        current_dir = Path(__file__).parent.parent
+        if str(current_dir) not in sys.path:
+            sys.path.insert(0, str(current_dir))
+
+        from yutto_plus.core import UploaderVideoManager, YuttoPlus
+
+        total_uploaders = len(uploader_infos)
+        completed_uploaders = 0
+        failed_uploaders = 0
+
+        # 发送初始状态
+        socketio.emit('uploader_batch_progress', {
+            'action': 'update_selected',
+            'level1': {  # UP主总体进度
+                'current': 0,
+                'total': total_uploaders,
+                'percentage': 0,
+                'status': '准备开始批量更新...'
+            },
+            'level2': {  # 当前UP主视频进度
+                'current': 0,
+                'total': 0,
+                'percentage': 0,
+                'status': '等待开始...',
+                'uploader_name': ''
+            },
+            'level3': []  # 并行下载进度
+        }, room=session_id)
+
+        print(f"🚀 开始批量更新循环，总共需要处理 {total_uploaders} 个UP主")
+
+        for i, uploader_info in enumerate(uploader_infos):
+            uid = uploader_info['uid']
+            username = uploader_info['username']
+            folder_name = uploader_info['folder_name']
+            output_dir = uploader_info['output_dir']
+
+            print(f"🔄 开始处理UP主 {i+1}/{total_uploaders}: {folder_name}")
+
+            try:
+                # 更新Level1进度
+                socketio.emit('uploader_batch_progress', {
+                    'action': 'update_selected',
+                    'level1': {
+                        'current': i,
+                        'total': total_uploaders,
+                        'percentage': int((i / total_uploaders) * 100),
+                        'status': f'正在处理: {folder_name} ({i+1}/{total_uploaders})'
+                    },
+                    'level2': {
+                        'current': 0,
+                        'total': 0,
+                        'percentage': 0,
+                        'status': '正在获取视频列表...',
+                        'uploader_name': username
+                    },
+                    'level3': []
+                }, room=session_id)
+
+                # 创建UP主视频管理器
+                manager = UploaderVideoManager(
+                    uid=uid,
+                    output_dir=output_dir,
+                    sessdata="",  # 从配置获取
+                    username=username
+                )
+
+                # 获取视频列表
+                videos = await manager.get_uploader_videos(update_check=True)
+
+                if not videos:
+                    print(f"⚠️ UP主 {username} 没有视频，跳过")
+                    completed_uploaders += 1
+                    continue
+
+                # 统计视频信息
+                total_videos = len(videos)
+                downloaded_count = sum(1 for v in videos if v.get('downloaded', '').lower() == 'true')
+                new_count = sum(1 for v in videos if v.get('downloaded', '').lower() != 'true')
+
+                print(f"📊 UP主 {username}: 总视频={total_videos}, 已下载={downloaded_count}, 新增={new_count}")
+
+                # 更新Level2进度
+                socketio.emit('uploader_batch_progress', {
+                    'action': 'update_selected',
+                    'level1': {
+                        'current': i,
+                        'total': total_uploaders,
+                        'percentage': int((i / total_uploaders) * 100),
+                        'status': f'正在处理: {folder_name} ({i+1}/{total_uploaders})'
+                    },
+                    'level2': {
+                        'current': downloaded_count,
+                        'total': total_videos,
+                        'percentage': int((downloaded_count / total_videos) * 100) if total_videos > 0 else 100,
+                        'status': f'总视频: {total_videos}, 已下载: {downloaded_count}, 新增: {new_count}',
+                        'uploader_name': username
+                    },
+                    'level3': []
+                }, room=session_id)
+
+                # 如果有新视频需要下载
+                if new_count > 0:
+                    print(f"🚀 开始下载UP主 {username} 的 {new_count} 个新视频...")
+
+                    # 获取需要下载的视频URL列表
+                    new_videos = [v for v in videos if v.get('downloaded', '').lower() != 'true']
+                    video_urls = [v['url'] for v in new_videos]
+
+                    # 获取用户目录
+                    user_directory = await manager.get_user_directory()
+
+                    # 开始下载，带Level3进度回调
+                    success = await download_uploader_videos_with_progress(
+                        session_id, video_urls, str(user_directory),
+                        i, total_uploaders, username, downloaded_count, total_videos
+                    )
+
+                    if success:
+                        print(f"✅ UP主 {username} 下载完成")
+                        completed_uploaders += 1
+                    else:
+                        print(f"❌ UP主 {username} 下载失败")
+                        failed_uploaders += 1
+                else:
+                    print(f"✅ UP主 {username} 没有新视频需要下载")
+                    completed_uploaders += 1
+
+            except Exception as e:
+                failed_uploaders += 1
+                error_msg = f"❌ 处理UP主 {folder_name} 失败: {e}"
+                print(error_msg)
+                import traceback
+                print(f"详细错误信息: {traceback.format_exc()}")
+
+                # 发送错误信息到前端
+                socketio.emit('uploader_batch_progress', {
+                    'action': 'update_selected',
+                    'level1': {
+                        'current': i,
+                        'total': total_uploaders,
+                        'percentage': int((i / total_uploaders) * 100),
+                        'status': f'处理失败: {folder_name} ({i+1}/{total_uploaders})'
+                    },
+                    'level2': {
+                        'current': 0,
+                        'total': 0,
+                        'percentage': 0,
+                        'status': f'错误: {str(e)}',
+                        'uploader_name': username
+                    },
+                    'level3': []
+                }, room=session_id)
+
+            # 短暂延迟
+            await asyncio.sleep(1)
+
+        print(f"🏁 批量更新循环结束，准备发送最终状态")
+        print(f"📊 最终统计: 成功={completed_uploaders}, 失败={failed_uploaders}, 总数={total_uploaders}")
+
+        # 发送最终状态
+        socketio.emit('uploader_batch_progress', {
+            'action': 'update_selected',
+            'level1': {
+                'current': total_uploaders,
+                'total': total_uploaders,
+                'percentage': 100,
+                'status': f'批量更新完成！成功: {completed_uploaders}, 失败: {failed_uploaders}'
+            },
+            'level2': {
+                'current': 0,
+                'total': 0,
+                'percentage': 100,
+                'status': '全部完成',
+                'uploader_name': ''
+            },
+            'level3': []
+        }, room=session_id)
+
+        # 发送完成信息
+        socketio.emit('uploader_success', {
+            'action': 'update_selected',
+            'message': f'批量更新完成！成功更新 {completed_uploaders} 个UP主' +
+                      (f'，失败 {failed_uploaders} 个' if failed_uploaders > 0 else ''),
+            'output': f'更新统计：\n- 成功更新: {completed_uploaders}\n- 失败数量: {failed_uploaders}'
+        }, room=session_id)
+
+    except Exception as e:
+        error_msg = f'批量更新出错: {str(e)}'
+        print(f"❌ {error_msg}")
+        import traceback
+        print(f"详细错误信息: {traceback.format_exc()}")
+
+        socketio.emit('uploader_error', {
+            'message': error_msg
+        }, room=session_id)
+
+
+async def download_uploader_videos_with_progress(session_id, video_urls, output_dir,
+                                                uploader_index, total_uploaders, username,
+                                                downloaded_count, total_videos):
+    """下载UP主视频，带三级进度条回调"""
+    try:
+        import asyncio
+        from yutto_plus.core import YuttoPlus
+
+        # 创建下载器实例
+        downloader = YuttoPlus(
+            max_concurrent=2,  # 固定并发数为2
+            default_output_dir=output_dir,
+            default_quality=80,
+            default_audio_quality=30280,
+            default_video_codec='avc',
+            default_output_format='mp4',
+            overwrite=False,
+            enable_resume=True,
+            sessdata=""
+        )
+
+        # 准备下载任务
+        tasks = []
+        for url in video_urls:
+            task_config = {
+                'quality': 80,
+                'audio_quality': 30280,
+                'video_codec': 'avc',
+                'output_format': 'mp4',
+                'output_dir': output_dir,
+                'overwrite': False,
+                'enable_resume': True,
+                'episodes_selection': '',
+                'create_folder_for_multi_p': True,
+                'no_danmaku': False,
+                'no_cover': False,
+                'danmaku_format': 'ass',
+                'audio_format': 'mp3',
+                'audio_bitrate': '192k'
+            }
+            tasks.append((url, task_config))
+
+        # 添加任务到下载器
+        task_ids = downloader.add_download_tasks(tasks)
+
+        # 设置进度回调
+        def setup_progress_callback():
+            original_update = downloader._update_progress_display
+
+            def enhanced_update():
+                try:
+                    # 调用原始更新
+                    original_update()
+
+                    # 获取当前进度
+                    overall_progress = downloader.get_overall_progress()
+                    tasks_progress = downloader.tasks_progress
+
+                    # 计算Level2进度（当前UP主的视频进度）
+                    current_completed = downloaded_count + overall_progress.completed_tasks
+                    level2_percentage = int((current_completed / total_videos) * 100) if total_videos > 0 else 100
+
+                    # 构建Level3进度（并行下载任务）
+                    level3_tasks = []
+                    for task_id, progress in tasks_progress.items():
+                        if progress.status.value in ['downloading', 'processing', 'completed']:
+                            level3_tasks.append({
+                                'task_id': task_id,
+                                'title': progress.video_info.get('title', '未知标题') if progress.video_info else '未知标题',
+                                'status': progress.status.value,
+                                'percentage': progress.progress_percentage,
+                                'speed': progress.download_speed / (1024*1024) if progress.download_speed else 0  # MB/s
+                            })
+
+                    # 发送三级进度更新
+                    socketio.emit('uploader_batch_progress', {
+                        'action': 'update_selected',
+                        'level1': {
+                            'current': uploader_index,
+                            'total': total_uploaders,
+                            'percentage': int((uploader_index / total_uploaders) * 100),
+                            'status': f'正在下载: {username} ({uploader_index+1}/{total_uploaders})'
+                        },
+                        'level2': {
+                            'current': current_completed,
+                            'total': total_videos,
+                            'percentage': level2_percentage,
+                            'status': f'下载进度: {current_completed}/{total_videos} 个视频',
+                            'uploader_name': username
+                        },
+                        'level3': level3_tasks
+                    }, room=session_id)
+
+                except Exception as e:
+                    print(f"❌ 进度回调出错: {e}")
+
+            downloader._update_progress_display = enhanced_update
+
+        # 设置回调
+        setup_progress_callback()
+
+        # 启动下载
+        downloader.start_parallel_download(display_mode='silent')
+
+        # 等待所有任务完成
+        while True:
+            await asyncio.sleep(1)
+            queue_status = downloader.task_manager.get_queue_status()
+
+            if queue_status['running'] == 0 and queue_status['pending'] == 0:
+                break
+
+        # 获取最终状态
+        final_status = downloader.task_manager.get_queue_status()
+        success_count = final_status['completed']
+        total_count = len(tasks)
+
+        return success_count > 0
+
+    except Exception as e:
+        print(f"❌ 下载UP主视频失败: {e}")
+        return False
+
 
 def cleanup_all_processes():
     """清理所有UP主相关进程"""

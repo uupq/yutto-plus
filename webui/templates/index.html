@@ -667,6 +667,67 @@
         .sessdata-valid { color: #28a745; }
         .sessdata-invalid { color: #dc3545; }
         .sessdata-none { color: #6c757d; }
+
+        /* 三级进度条样式 */
+        .progress-level {
+            margin: 15px 0;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            background-color: #fafafa;
+        }
+
+        .progress-level h5 {
+            margin: 0 0 12px 0;
+            color: #333;
+            font-size: 14px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .progress-level h5:before {
+            content: "📊";
+            font-size: 16px;
+        }
+
+        .level3-task {
+            background-color: #fff;
+            transition: all 0.3s ease;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            padding: 12px;
+        }
+
+        .level3-task:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-color: #667eea;
+        }
+
+        #level3TasksContainer {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        #level3TasksContainer::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #level3TasksContainer::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        #level3TasksContainer::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        #level3TasksContainer::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
     </style>
 </head>
 <body>
@@ -969,6 +1030,47 @@
                     <div class="parallel-status">
                         <h4 id="uploaderStatusTitle">操作状态</h4>
                         <div id="uploaderStatusContent"></div>
+
+                        <!-- 三级进度条 -->
+                        <div id="uploaderBatchProgress" style="display: none;">
+                            <!-- Level 1: UP主总体进度 -->
+                            <div class="progress-level">
+                                <h5>UP主总体进度</h5>
+                                <div class="progress-container">
+                                    <div class="progress-bar">
+                                        <div id="level1ProgressFill" class="progress-fill"></div>
+                                    </div>
+                                    <div class="progress-info">
+                                        <span id="level1ProgressText">准备中...</span>
+                                        <span id="level1ProgressPercent">0%</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Level 2: 当前UP主视频进度 -->
+                            <div class="progress-level">
+                                <h5 id="level2UploaderName">当前UP主视频进度</h5>
+                                <div class="progress-container">
+                                    <div class="progress-bar">
+                                        <div id="level2ProgressFill" class="progress-fill"></div>
+                                    </div>
+                                    <div class="progress-info">
+                                        <span id="level2ProgressText">等待开始...</span>
+                                        <span id="level2ProgressPercent">0%</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Level 3: 并行下载任务进度 -->
+                            <div class="progress-level">
+                                <h5>并行下载任务</h5>
+                                <div id="level3TasksContainer">
+                                    <!-- 动态生成的并行任务进度条 -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 原有的单一进度条（兼容性保留） -->
                         <div id="uploaderProgress" class="progress-container" style="display: none;">
                             <div class="progress-bar">
                                 <div id="uploaderProgressFill" class="progress-fill"></div>
@@ -2151,6 +2253,107 @@
             document.getElementById('preciseOverallProgress').style.width = `${percentage}%`;
             document.getElementById('preciseOverallText').textContent = progressText;
             document.getElementById('preciseOverallSpeed').textContent = speedText;
+        }
+
+        function showUploaderBatchProgress(data) {
+            // 显示UP主批量更新的三级进度条
+            const uploaderStatus = document.getElementById('uploaderStatus');
+            const uploaderInfo = document.getElementById('uploaderInfo');
+            const batchProgress = document.getElementById('uploaderBatchProgress');
+            const singleProgress = document.getElementById('uploaderProgress');
+            const statusContent = document.getElementById('uploaderStatusContent');
+
+            if (uploaderStatus && uploaderInfo && batchProgress) {
+                // 隐藏其他区域，显示状态区域
+                document.getElementById('uploaderFolderSelection').style.display = 'none';
+                document.getElementById('uploaderVideoList').style.display = 'none';
+                uploaderStatus.style.display = 'block';
+                uploaderInfo.style.display = 'block';
+
+                // 显示批量进度条，隐藏单一进度条和状态内容
+                batchProgress.style.display = 'block';
+                singleProgress.style.display = 'none';
+                statusContent.style.display = 'none';
+
+                // 更新Level 1进度（UP主总体进度）
+                if (data.level1) {
+                    const level1 = data.level1;
+                    document.getElementById('level1ProgressFill').style.width = `${level1.percentage}%`;
+                    document.getElementById('level1ProgressText').textContent = level1.status;
+                    document.getElementById('level1ProgressPercent').textContent = `${level1.percentage}%`;
+                }
+
+                // 更新Level 2进度（当前UP主视频进度）
+                if (data.level2) {
+                    const level2 = data.level2;
+                    document.getElementById('level2ProgressFill').style.width = `${level2.percentage}%`;
+                    document.getElementById('level2ProgressText').textContent = level2.status;
+                    document.getElementById('level2ProgressPercent').textContent = `${level2.percentage}%`;
+
+                    // 更新UP主名称
+                    if (level2.uploader_name) {
+                        document.getElementById('level2UploaderName').textContent = `当前UP主: ${level2.uploader_name}`;
+                    }
+                }
+
+                // 更新Level 3进度（并行下载任务）
+                if (data.level3) {
+                    updateLevel3Tasks(data.level3);
+                }
+            }
+        }
+
+        function updateLevel3Tasks(tasks) {
+            const container = document.getElementById('level3TasksContainer');
+
+            if (tasks.length === 0) {
+                container.innerHTML = '<div style="color: #666; font-size: 12px; padding: 10px;">暂无并行下载任务</div>';
+                return;
+            }
+
+            let html = '';
+            tasks.forEach(task => {
+                const statusColor = getTaskStatusColor(task.status);
+                html += `
+                    <div class="level3-task" style="margin-bottom: 8px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <span style="font-weight: bold; font-size: 12px;">${task.title}</span>
+                            <span style="color: ${statusColor}; font-size: 11px;">${getTaskStatusText(task.status)}</span>
+                        </div>
+                        <div class="progress-container" style="height: 16px;">
+                            <div class="progress-bar" style="height: 16px;">
+                                <div class="progress-fill" style="width: ${task.percentage}%; height: 16px;"></div>
+                            </div>
+                            <div class="progress-info" style="font-size: 11px;">
+                                <span>${task.percentage.toFixed(1)}%</span>
+                                <span>${task.speed.toFixed(1)} MB/s</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        function getTaskStatusColor(status) {
+            switch (status) {
+                case 'downloading': return '#007bff';
+                case 'processing': return '#ffc107';
+                case 'completed': return '#28a745';
+                case 'failed': return '#dc3545';
+                default: return '#6c757d';
+            }
+        }
+
+        function getTaskStatusText(status) {
+            switch (status) {
+                case 'downloading': return '下载中';
+                case 'processing': return '处理中';
+                case 'completed': return '已完成';
+                case 'failed': return '失败';
+                default: return '未知';
+            }
         }
 
         function updateUploaderProgress(percentage, progressText, speedText, source, overall = null) {
@@ -3505,6 +3708,11 @@
 
             // 自动滚动到底部
             contentDiv.scrollTop = contentDiv.scrollHeight;
+        });
+
+        // UP主批量更新三级进度条
+        socket.on('uploader_batch_progress', function(data) {
+            showUploaderBatchProgress(data);
         });
 
         // UP主操作成功

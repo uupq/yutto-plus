@@ -4,7 +4,7 @@
 description: "下载up适用的配置文件"
 
 # === 基础设置 ===
-quality: 127           # 视频质量: 720P高清 (平衡质量和速度)
+quality: 127           # 视频质量: 8K 超高清
 audio_quality: 30232  # 音频质量: 128kbps (节省空间)
 output_dir: "~/Downloads/upper"  # 批量下载目录
 format: "mp4"         # 输出格式: MP4兼容性好
@@ -14,14 +14,14 @@ sessdata: "eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dM
 
 
 # === 并行设置 ===
-concurrent: 2         # 高并发数量: 快速批量下载
+concurrent: 3         # 高并发数量: 快速批量下载
 parallel_display: "table"  # 表格显示: 清晰的进度界面
 
 # === 下载内容 (精简) ===
 audio_only: false     
 no_video: false       
-no_danmaku: false      # 跳过弹幕: 节省时间和空间
-no_cover: false        # 跳过封面: 节省时间
+no_danmaku: false      # 不跳过弹幕
+no_cover: false        # 不跳过封面
 
 # === 格式设置 ===
 video_codec: "avc"    # AVC编码: 兼容性最好
