@@ -43,7 +43,11 @@ class ConfigManager:
             "verbose": False,
             
             # 登录凭证
-            "sessdata": None
+            "sessdata": None,
+
+            # 严格验证设置
+            "vip_strict": False,
+            "login_strict": False
         }
     
     def load_config(self, config_path: str) -> Dict[str, Any]:

@@ -327,6 +327,18 @@ Web界面功能:
         type=str,
         help='B站登录凭证'
     )
+
+    parser.add_argument(
+        '--vip-strict',
+        action='store_true',
+        help='启用严格检查大会员状态，非大会员时停止下载'
+    )
+
+    parser.add_argument(
+        '--login-strict',
+        action='store_true',
+        help='启用严格检查登录状态，未登录时停止下载'
+    )
     
     # 资源选择参数
     parser.add_argument(
@@ -1011,7 +1023,9 @@ def merge_config_with_args(config: dict, args):
         'verbose': 'verbose',
         'sessdata': 'sessdata',
         'episodes_selection': 'episodes',
-        'create_folder_for_multi_p': 'no_folder'  # 注意这个是反向的
+        'create_folder_for_multi_p': 'no_folder',  # 注意这个是反向的
+        'vip_strict': 'vip_strict',
+        'login_strict': 'login_strict'
     }
 
     # 忽略的配置项（不会产生警告）
@@ -1059,7 +1073,7 @@ def merge_config_with_args(config: dict, args):
                     if current_value == default_values.get(args_attr):
                         setattr(args, args_attr, config_value)
                 
-                elif config_key in ['audio_only', 'no_video', 'no_danmaku', 'no_cover', 'overwrite', 'quiet', 'verbose']:
+                elif config_key in ['audio_only', 'no_video', 'no_danmaku', 'no_cover', 'overwrite', 'quiet', 'verbose', 'vip_strict', 'login_strict']:
                     # 对于布尔参数，如果配置文件设为True，则设置args
                     if config_value:
                         setattr(args, args_attr, True)

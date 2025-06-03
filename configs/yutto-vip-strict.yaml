@@ -1,0 +1,41 @@
+# YuttoPlus 大会员严格验证配置文件
+# 此配置启用了严格的大会员验证，确保只有大会员才能下载高清视频
+
+description: "大会员严格验证配置 - 确保只下载大会员可访问的高清内容"
+
+# === 基础设置 ===
+quality: 120          # 4K画质 (仅大会员可用)
+audio_quality: 30280  # 320kbps音质
+output_dir: "./Downloads/VIP"
+format: "mp4"
+
+# === 并行设置 ===
+concurrent: 2          # 降低并发数，避免触发限制
+parallel_display: "table"
+
+# === 资源选择 ===
+audio_only: false
+no_video: false
+no_danmaku: false
+no_cover: false
+
+# === 格式设置 ===
+danmaku_format: "ass"
+audio_format: "mp3"
+audio_bitrate: "320k"  # 高音质
+video_codec: "hevc"    # 使用HEVC编码
+
+# === 其他设置 ===
+overwrite: false
+enable_resume: true
+quiet: false
+verbose: true          # 启用详细输出，便于调试
+
+# === 严格验证设置 ===
+vip_strict: true       # 启用严格大会员验证，非大会员时停止下载
+login_strict: true     # 启用严格登录验证，未登录时停止下载
+
+# === 登录设置 ===
+# 请填入你的B站SESSDATA，用于下载高清视频和大会员内容
+# 获取方法: 登录B站 -> F12开发者工具 -> Application -> Cookies -> SESSDATA
+# sessdata: "你的SESSDATA"

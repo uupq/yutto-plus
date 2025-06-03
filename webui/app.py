@@ -372,7 +372,9 @@ def init_downloader(session_id, config=None):
         default_output_format=config.get('format', 'mp4'),
         overwrite=config.get('overwrite', False),
         enable_resume=config.get('enable_resume', True),
-        sessdata=config.get('sessdata')
+        sessdata=config.get('sessdata'),
+        vip_strict=config.get('vip_strict', False),
+        login_strict=config.get('login_strict', False)
     )
 
     # 保存为全局下载器
@@ -553,6 +555,10 @@ overwrite: {str(config_data.get('overwrite', False)).lower()}      # 是否覆�
 enable_resume: {str(config_data.get('enable_resume', True)).lower()}   # 是否启用断点续传
 quiet: {str(config_data.get('quiet', False)).lower()}          # 是否使用安静模式
 verbose: {str(config_data.get('verbose', False)).lower()}        # 是否显示详细信息
+
+# === 严格验证设置 ===
+vip_strict: {str(config_data.get('vip_strict', False)).lower()}     # 启用严格大会员验证，非大会员时停止下载
+login_strict: {str(config_data.get('login_strict', False)).lower()}   # 启用严格登录验证，未登录时停止下载
 
 # === 登录设置（可选）===
 # 请填入你的B站SESSDATA，用于下载高清视频和大会员内容
@@ -866,7 +872,9 @@ def handle_parallel_download_request(data):
                         "audio_format": merged_config.get('audio_format', 'mp3'),
                         "audio_only": merged_config.get('audio_only', False),
                         "audio_bitrate": merged_config.get('audio_bitrate', '192k'),
-                        "episodes_selection": url_parts  # 添加分P选择参数
+                        "episodes_selection": url_parts,  # 添加分P选择参数
+                        "vip_strict": merged_config.get('vip_strict', False),
+                        "login_strict": merged_config.get('login_strict', False)
                     }
                     tasks.append((clean_url, task_config))
 
@@ -1526,7 +1534,9 @@ def start_uploader_parallel_download(session_id, urls, config, action, user_dire
                     'no_cover': merged_config.get('no_cover', False),
                     'danmaku_format': merged_config.get('danmaku_format', 'ass'),
                     'audio_format': merged_config.get('audio_format', 'mp3'),
-                    'audio_bitrate': merged_config.get('audio_bitrate', '192k')
+                    'audio_bitrate': merged_config.get('audio_bitrate', '192k'),
+                    'vip_strict': merged_config.get('vip_strict', False),
+                    'login_strict': merged_config.get('login_strict', False)
                 }
                 tasks.append((clean_url, task_config))
             except Exception as e:

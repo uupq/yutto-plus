@@ -38,4 +38,8 @@ verbose: false        # 是否显示详细信息
 # === 登录设置（可选）===
 # 请填入你的B站SESSDATA，用于下载高清视频和大会员内容
 # 获取方法: 登录B站 -> F12开发者工具 -> Application -> Cookies -> SESSDATA
-# sessdata: "你的SESSDATA" 
+# sessdata: "你的SESSDATA"
+
+# === 严格验证设置 ===
+vip_strict: false     # 启用严格检查大会员状态，非大会员时停止下载
+login_strict: false   # 启用严格检查登录状态，未登录时停止下载

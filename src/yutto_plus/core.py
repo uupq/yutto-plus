@@ -631,6 +631,10 @@ class DownloadConfig:
     episodes_selection: Optional[str] = None  # 分P选择，如 "1,3,5-8"
     create_folder_for_multi_p: bool = True  # 为多P视频创建文件夹
 
+    # 严格验证配置
+    vip_strict: bool = False  # 启用严格检查大会员状态
+    login_strict: bool = False  # 启用严格检查登录状态
+
     def __post_init__(self):
         """后处理：扩展用户路径"""
         self.default_output_dir = str(expand_user_path(self.default_output_dir))
@@ -1359,6 +1363,11 @@ class DownloadTask:
     async def _async_download(self):
         """异步下载实现"""
         try:
+            # 0. 严格验证用户信息（在下载开始前）
+            if not await self._validate_strict_mode():
+                self._report_status_change(TaskStatus.FAILED)
+                return
+
             # 1. 获取视频信息
             self._report_status_change(TaskStatus.EXTRACTING)
             self._print_if_not_silent(f"🔍 正在分析视频: {self.url}")
@@ -2742,7 +2751,15 @@ class YuttoPlus:
         
         print(f"🚀 YuttoPlus 已初始化 (并发数: {max_concurrent})")
         print(f"📁 输出目录: {self.config.default_output_dir}")
-        
+
+        # 显示严格验证状态
+        if self.config.vip_strict or self.config.login_strict:
+            print(f"🔒 严格验证模式已启用:")
+            if self.config.vip_strict:
+                print(f"    🎖️ 大会员验证: 启用")
+            if self.config.login_strict:
+                print(f"    👤 登录验证: 启用")
+
         # 验证用户登录状态
         if self.config.sessdata:
             self._validate_user_info()
@@ -2775,11 +2792,11 @@ class YuttoPlus:
                     result["done"] = True
                 finally:
                     loop.close()
-            
+
             thread = threading.Thread(target=validation_thread, daemon=True)
             thread.start()
             thread.join(timeout=10)  # 10秒超时
-            
+
             if result["done"] and result["user_info"]:
                 user_info = result["user_info"]
                 if user_info["is_login"]:
@@ -2794,10 +2811,66 @@ class YuttoPlus:
                 print(f"⚠️ 验证失败: {result['error']}")
             else:
                 print("⚠️ 验证超时，将继续使用提供的 SESSDATA")
-                
+
         except Exception as e:
             print(f"⚠️ 验证过程出错: {e}")
-    
+
+    async def validate_user_info_strict(self, check_vip: bool = False, check_login: bool = False) -> bool:
+        """严格验证用户信息，用于vip-strict和login-strict功能
+
+        Args:
+            check_vip: 是否检查VIP状态
+            check_login: 是否检查登录状态
+
+        Returns:
+            bool: 验证是否通过
+        """
+        if not check_vip and not check_login:
+            return True
+
+        if not self.config.sessdata:
+            if check_login or check_vip:
+                print("❌ 启用了严格验证模式，但未提供 SESSDATA")
+                return False
+            return True
+
+        try:
+            async with BilibiliAPIClient(self.config.sessdata) as client:
+                user_info = await client.get_user_info()
+
+                if check_login and not user_info.get("is_login", False):
+                    print("❌ 启用了严格登录验证，但当前未登录或 SESSDATA 无效")
+                    return False
+
+                if check_vip and not user_info.get("vip_status", False):
+                    print("❌ 启用了严格大会员验证，但当前不是大会员或 SESSDATA 无效")
+                    print("💡 提示：请确保账号是有效的大会员，或关闭 --vip-strict 参数")
+                    return False
+
+                return True
+
+        except Exception as e:
+            print(f"❌ 验证用户信息时出错: {e}")
+            return False
+
+    async def _validate_strict_mode(self) -> bool:
+        """验证严格模式设置"""
+        vip_strict = self.task_config.get('vip_strict', self.config.vip_strict)
+        login_strict = self.task_config.get('login_strict', self.config.login_strict)
+
+        if vip_strict or login_strict:
+            self._print_if_not_silent(f"🔒 正在进行严格验证...")
+            if vip_strict:
+                self._print_if_not_silent(f"    🎖️ 检查大会员状态")
+            if login_strict:
+                self._print_if_not_silent(f"    👤 检查登录状态")
+
+            return await self.validate_user_info_strict(
+                check_vip=vip_strict,
+                check_login=login_strict
+            )
+        return True
+
     def extract_video_id(self, url: str) -> Optional[str]:
         """从URL中提取视频ID（BV号或AV号）"""
         import re

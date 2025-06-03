@@ -11,7 +11,7 @@ format: "mp4"         # 输出格式: MP4兼容性好
 
 # === 登录设置 ===
 sessdata: "eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dMDl1PfE_Vj6p6xGwdAO94TQqeW3WBhVDwSVlhXQThEYjlvRl81MmZVRGVuSk92Q3VGTHhNRDNKM21rblhwUy1keWZGQnc0N0xoelJMRlFxdzhteUNubXp4a2pyc2d2M0xrQ2llNVUzUi1HZjNxSUxnIIEC"
-
+vip_strict: true
 
 # === 并行设置 ===
 concurrent: 3         # 高并发数量: 快速批量下载
