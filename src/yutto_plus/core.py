@@ -927,51 +927,64 @@ class UploaderVideoManager:
         self.username = username  # 如果提供了用户名，直接使用，避免API调用
 
     async def get_uploader_name(self) -> str:
-        """获取UP主用户名，使用bilibili_api库但保持30次重试机制"""
+        """获取UP主用户名，双重备份策略：先bilibili_api库，再直接HTTP请求"""
         if self.username:
             return self.username
 
-        max_retries = 30  # 恢复30次重试，适应批量处理的需求
+        max_retries = 30
         retry_delay = 3
 
         for attempt in range(max_retries):
+            print(f"🔍 尝试获取UP主用户名 (第{attempt + 1}/{max_retries}次)")
+            
+            # 方法1：尝试使用bilibili_api库
             try:
-                # 使用bilibili_api库，但保持强重试机制
                 from bilibili_api import user
                 u = user.User(self.uid)
                 user_info = await u.get_user_info()
                 name = user_info.get("name", "")
 
                 if name and name.strip():
+                    print(f"✅ 通过bilibili_api库成功获取用户名: {name}")
                     self.username = name
                     return self.username
                 else:
-                    raise Exception("API返回空用户名")
+                    raise Exception("bilibili_api返回空用户名")
 
             except Exception as e:
                 error_msg = str(e)
-
-                if "风控校验失败" in error_msg:
-                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 风控校验失败")
-                elif '404' in error_msg:
+                print(f"⚠️ bilibili_api库方法失败: {error_msg}")
+                
+                # 如果是404错误，直接返回用户不存在
+                if '404' in error_msg:
                     self.username = f"用户不存在({self.uid})"
                     return self.username
-                elif '412' in error_msg:
-                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 412 Precondition Failed")
-                elif '-799' in error_msg or '请求过于频繁' in error_msg:
-                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 请求过于频繁，请稍后再试")
-                elif '-401' in error_msg or '非法访问' in error_msg:
-                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): 非法访问")
-                else:
-                    print(f"⚠️ 获取UP主用户名失败 (第{attempt + 1}/{max_retries}次尝试): {error_msg}")
+            
+            # 方法2：尝试使用直接HTTP请求
+            try:
+                async with BilibiliAPIClient(self.sessdata) as client:
+                    user_info = await client.get_user_info(uid=self.uid)
+                    name = user_info.get("name", "")
 
-                if attempt < max_retries - 1:
-                    print(f"🔄 {retry_delay}秒后重试...")
-                    await asyncio.sleep(retry_delay)
-                else:
-                    print(f"❌ 重试{max_retries}次后仍无法获取UP主用户名，使用默认用户名")
-                    self.username = f'获取用户名失败({self.uid})'
-                    return self.username
+                    if name and name.strip():
+                        print(f"✅ 通过直接HTTP请求成功获取用户名: {name}")
+                        self.username = name
+                        return self.username
+                    else:
+                        raise Exception("直接HTTP请求返回空用户名")
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"⚠️ 直接HTTP请求方法失败: {error_msg}")
+            
+            # 两种方法都失败，如果不是最后一次尝试，则等待后重试
+            if attempt < max_retries - 1:
+                print(f"🔄 两种方法都失败，{retry_delay}秒后重试...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print(f"❌ 重试{max_retries}次后仍无法获取UP主用户名，使用默认用户名")
+                self.username = f'获取用户名失败({self.uid})'
+                return self.username
 
         self.username = f'获取用户名失败({self.uid})'
         return self.username

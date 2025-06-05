@@ -1,0 +1,75 @@
+我后续需要拓展yutto-plus支持下载以下格式的视频
+
+单个视频url
+https://www.bilibili.com/video/BV16A7nzXE2b
+https://www.bilibili.com/video/BV1Pr7nzoEH6
+
+多P视频url
+https://www.bilibili.com/video/BV1unjgzqEms
+https://www.bilibili.com/video/BV1ZB75zeEa5
+https://www.bilibili.com/video/BV1RcjSzXE6E
+
+收藏夹url
+https://space.bilibili.com/1996786680/favlist?fid=1247383680&ftype=create
+https://space.bilibili.com/1562307398/favlist?fid=1365788598&ftype=create
+
+需要--sessdata才能访问的收藏夹url
+https://space.bilibili.com/1943873/favlist?fid=3444983473&ftype=create
+https://space.bilibili.com/1943873/favlist?fid=3460695973&ftype=create
+
+视频合集url
+https://space.bilibili.com/1996786680/favlist?fid=1959244&ftype=collect&ctype=21
+https://space.bilibili.com/1996786680/favlist?fid=1058588&ftype=collect&ctype=21
+
+需要--sessdata才能访问的视频合集url
+https://space.bilibili.com/1943873/favlist?fid=4068693&ftype=collect&ctype=21
+https://space.bilibili.com/1943873/favlist?fid=5219678&ftype=collect&ctype=21
+
+
+番剧url
+https://www.bilibili.com/bangumi/play/ss28747?spm_id_from=333.1387.0.0
+https://www.bilibili.com/bangumi/play/ss48518?spm_id_from=333.1387.0.0
+
+课程url
+https://www.bilibili.com/cheese/play/ss190402215?csource=common_rank_classcard_null?csource=common_channelclass_hotselling_null&spm_id_from=333.874.selfDef.home_ranklist_click
+https://m.bilibili.com/cheese/play/ss1157?csource=Detail_relevantclass
+
+
+up投稿视频主页url
+https://space.bilibili.com/1108252038/upload/video
+https://space.bilibili.com/3546900437404310?spm_id_from=333.1387.favlist.content.click
+https://space.bilibili.com/3546903572646607?spm_id_from=333.1387.favlist.content.click
+
+
+
+所以首先的我需要你编写脚本来试图获取
+
+1.单个视频url（这个用户会直接提供，所以可以跳过）
+2.多P视频的全部信息（每个视频的信息以及总的信息）
+3.通过收藏夹url获取其中所有的视频url list
+4.通过视频合集url获取其中所有的视频url list
+5.通过用户提供的--sessdata获取需要--sessdata才能访问的收藏夹/合集url中所有的视频url list
+6.通过番剧url获取其中所有的视频url list（一共多少集，每集视频url等信息）
+7.通过课程url获取其中所有的视频url list（一共多少集，每集视频url等信息）
+8.通过up投稿视频主页url获取这个up主投稿过的所有的视频url list
+
+具体的获取方法可以通过搜索来参考以下B站API教程：
+
+关于番剧
+https://nemo2011.github.io/bilibili-api/#/modules/bangumi
+关于用户合集与列表相关
+
+示例：获取一个合集中的所有视频
+https://nemo2011.github.io/bilibili-api/#/examples/channel_series
+
+
+
+你如果有什么疑问或者需求可以通过call the MCP interactive_feedback 来向我询问或者提出要求
+
+
+
+
+
+
+
+

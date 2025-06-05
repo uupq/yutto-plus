@@ -4,9 +4,9 @@
 description: "WebUI 默认配置"
 
 # === 基础设置 ===
-quality: 80           # 视频质量: 1080P 高清 (推荐)
+quality: 127           # 视频质量: 8K 超高清 (需要大会员)
 audio_quality: 30280  # 音频质量: 320kbps (高质量)
-output_dir: "~/Downloads/Bilibili"  # 输出目录
+output_dir: "/Volumes/DataCenter/多媒体资料/短视频"  # 输出目录
 format: "mp4"         # 输出格式
 
 # === 并行设置 ===
@@ -27,7 +27,7 @@ video_codec: "avc"    # 视频编码: avc / hevc / av1
 
 # === 多P视频设置 ===
 create_folder_for_multi_p: true  # 为多P视频创建文件夹
-# episodes_selection: "1,3,5-8"  # 分P选择 (可选): 支持范围和排除语法
+# episodes_selection: "1,3,5~8"  # 分P选择 (可选): 支持范围和排除语法
 
 # === 其他设置 ===
 overwrite: false      # 是否覆盖现有文件
@@ -35,10 +35,14 @@ enable_resume: true   # 是否启用断点续传
 quiet: false          # 是否使用安静模式
 verbose: false        # 是否显示详细信息
 
+# === 严格验证设置 ===
+vip_strict: false     # 启用严格大会员验证，非大会员时停止下载
+login_strict: false   # 启用严格登录验证，未登录时停止下载
+
 # === 登录设置（可选）===
 # 请填入你的B站SESSDATA，用于下载高清视频和大会员内容
 # 获取方法: 登录B站 -> F12开发者工具 -> Application -> Cookies -> SESSDATA
-sessdata: "eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dMDl1PfE_Vj6p6xGwdAO94TQqeW3WBhVDwSVlhXQThEYjlvRl81MmZVRGVuSk92Q3VGTHhNRDNKM21rblhwUy1keWZGQnc0N0xoelJMRlFxdzhlNVUzUi1HZjNxSUxnIIEC"
+sessdata: "7d154532%2C1764692576%2Cfb0f4%2A62CjBg7hHFomq_sN3w-MmOcc6yiY42zIF_b1tUe-Mb5swBu8TvC47UFEgNThibrKiert8SVnprbUFsdk4wYTBFUVl1X0JoeUJSeW5kVndzMmhVYnZ1Z3Z5LURocWVjUlV6Y1ozNGNhX3F1Ujg1cjJQRTEwUFVZT25uandGVFdldE5EMjZuczlkNWFnIIEC"
 
 # === 配置说明 ===
 # 画质对照表:

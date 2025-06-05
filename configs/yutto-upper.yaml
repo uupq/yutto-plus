@@ -1,59 +1,60 @@
-# YuttoPlus 批量下载配置文件
-# 适用场景: 批量下载大量视频，优先速度而非质量
+# YuttoPlus 配置文件
+# 适用场景: 下载up适用的配置文件
 
 description: "下载up适用的配置文件"
 
 # === 基础设置 ===
-quality: 127           # 视频质量: 8K 超高清
-audio_quality: 30232  # 音频质量: 128kbps (节省空间)
-output_dir: "~/Downloads/upper"  # 批量下载目录
-format: "mp4"         # 输出格式: MP4兼容性好
-
-# === 登录设置 ===
-sessdata: "eac50cae%2C1749094831%2C5a8bf%2Ac2CjAXtG6A6ADJDGdz3HyrCcFgnvEpoTd44dMDl1PfE_Vj6p6xGwdAO94TQqeW3WBhVDwSVlhXQThEYjlvRl81MmZVRGVuSk92Q3VGTHhNRDNKM21rblhwUy1keWZGQnc0N0xoelJMRlFxdzhteUNubXp4a2pyc2d2M0xrQ2llNVUzUi1HZjNxSUxnIIEC"
-vip_strict: true
+quality: 127           # 视频质量: 8K 超高清 (需要大会员)
+audio_quality: 30232  # 音频质量: 128kbps (标准)
+output_dir: "/Volumes/DataCenter/多媒体资料/短视频"  # 输出目录
+format: "mp4"         # 输出格式
 
 # === 并行设置 ===
-concurrent: 3         # 高并发数量: 快速批量下载
-parallel_display: "table"  # 表格显示: 清晰的进度界面
+concurrent: 3         # 并发下载数量
+parallel_display: "table"  # 显示模式: table(表格) / simple(简单) / silent(静默)
 
-# === 下载内容 (精简) ===
-audio_only: false     
-no_video: false       
-no_danmaku: false      # 不跳过弹幕
-no_cover: false        # 不跳过封面
+# === 下载内容 ===
+audio_only: false     # 是否仅下载音频
+no_video: false       # 是否跳过视频
+no_danmaku: false     # 是否跳过弹幕
+no_cover: false       # 是否跳过封面
 
 # === 格式设置 ===
-video_codec: "avc"    # AVC编码: 兼容性最好
-audio_format: "aac"   # AAC音频: 文件较小
-audio_bitrate: "128k" # 较低比特率: 节省空间
+danmaku_format: "ass" # 弹幕格式: xml / ass / protobuf
+audio_format: "mp3"   # 音频格式: mp3 / wav / flac / m4a / aac
+audio_bitrate: "192k" # 音频比特率
+video_codec: "avc"    # 视频编码: avc / hevc / av1
+
+# === 多P视频设置 ===
+create_folder_for_multi_p: true  # 为多P视频创建文件夹
+# episodes_selection: "1,3,5~8"  # 分P选择 (可选): 支持范围和排除语法
 
 # === 其他设置 ===
-overwrite: false      # 避免重复下载
-enable_resume: true   # 支持断点续传: 批量下载可能中断
-quiet: false         
-verbose: false        # 不显示详细信息: 减少输出
+overwrite: false      # 是否覆盖现有文件
+enable_resume: true   # 是否启用断点续传
+quiet: false          # 是否使用安静模式
+verbose: false        # 是否显示详细信息
 
-# === 批量下载建议 ===
-# 使用方法:
-# python yutto-plus.py --config yutto-batch-download.yaml url1 url2 url3 ...
-#
-# 或者从文件读取URL列表:
-# python yutto-plus.py --config yutto-batch-download.yaml $(cat urls.txt)
-#
-# 推荐设置:
-# - 选择合适的画质 (64=720P, 32=480P)
-# - 关闭弹幕和封面下载
-# - 使用高并发数量
-# - 选择兼容性好的格式
+# === 严格验证设置 ===
+vip_strict: false     # 启用严格大会员验证，非大会员时停止下载
+login_strict: false   # 启用严格登录验证，未登录时停止下载
 
-# === 画质建议 ===
-# 大量下载建议画质选择:
-# 64 (720P): 平衡质量和大小
-# 32 (480P): 最小文件，快速下载  
-# 80 (1080P): 如果网络和存储充足
+# === 登录设置（可选）===
+# 请填入你的B站SESSDATA，用于下载高清视频和大会员内容
+# 获取方法: 登录B站 -> F12开发者工具 -> Application -> Cookies -> SESSDATA
+sessdata: "7d154532%2C1764692576%2Cfb0f4%2A62CjBg7hHFomq_sN3w-MmOcc6yiY42zIF_b1tUe-Mb5swBu8TvC47UFEgNThibrKiert8SVnprbUFsdk4wYTBFUVl1X0JoeUJSeW5kVndzMmhVYnZ1Z3Z5LURocWVjUlV6Y1ozNGNhX3F1Ujg1cjJQRTEwUFVZT25uandGVFdldE5EMjZuczlkNWFnIIEC"
 
-# === 显示模式说明 ===
-# table: 完整表格界面，显示所有任务进度 (推荐)
-# simple: 简单输出，只显示基本信息
-# silent: 静默模式，最少输出 
+# === 配置说明 ===
+# 画质对照表:
+# 127: 8K 超高清 (需要大会员，文件很大)
+# 120: 4K 超清 (需要大会员，文件较大)
+# 116: 1080P60 (60帧，需要大会员)
+# 80:  1080P 高清 (推荐，平衡质量和大小)
+# 64:  720P 高清 (较快下载，中等质量)
+# 32:  480P 清晰 (快速下载，一般质量)
+
+# 音频质量对照表:
+# 30251: Hi-Res 无损 (FLAC格式，文件很大)
+# 30280: 320kbps (高质量，推荐)
+# 30232: 128kbps (标准质量)
+# 30216: 64kbps (节省空间)
