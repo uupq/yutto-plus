@@ -1251,16 +1251,18 @@ async def download_uploader_videos(uid: int, args):
             print("📋 没有找到投稿视频")
             return
 
-        # 显示视频列表统计
-        total_videos = len(videos)
-        downloaded_count = sum(1 for v in videos if v.get('downloaded', '').lower() == 'true')
-        pending_count = total_videos - downloaded_count
+        # 自动更新模式的视频统计已经在get_uploader_videos中显示了
+        # 这里只需要处理非自动更新模式的统计
+        if not args.update_uploader:
+            total_videos = len(videos)
+            downloaded_count = sum(1 for v in videos if v.get('downloaded', '').lower() == 'true')
+            pending_count = total_videos - downloaded_count
 
-        if not args.quiet:
-            print(f"\n📊 视频统计:")
-            print(f"   📺 总视频数: {total_videos}")
-            print(f"   ✅ 已下载: {downloaded_count}")
-            print(f"   ⏳ 待下载: {pending_count}")
+            if not args.quiet:
+                print(f"\n📊 视频统计:")
+                print(f"   📺 总视频数: {total_videos}")
+                print(f"   ✅ 已下载: {downloaded_count}")
+                print(f"   ⏳ 待下载: {pending_count}")
 
         # 如果只是列表模式，显示视频列表并退出
         if args.list_only:

@@ -1007,12 +1007,29 @@ class UploaderVideoManager:
 
         self.csv_path = user_dir / "video_urls.csv"
 
+        # 自动检测是否已有UP主数据，如果有则自动启用更新模式
+        auto_update_mode = False
+        if self.csv_path.exists() and not update_check:
+            # 检查CSV文件是否有有效内容
+            existing_videos = await self._load_videos_from_csv()
+            if existing_videos:
+                print(f"📂 检测到已存在UP主 {username} 的数据文件")
+                print(f"📄 现有视频数量: {len(existing_videos)}")
+                print(f"🔄 自动启用更新模式，检查新视频...")
+                auto_update_mode = True
+                update_check = True
+            else:
+                print(f"📂 发现空的数据文件，将重新获取完整列表")
+
         # 如果CSV存在且不需要更新检查，直接读取
         if self.csv_path.exists() and not update_check:
             return await self._load_videos_from_csv()
 
         # 从API获取视频列表
-        print(f"🔍 正在获取UP主 {username} (UID: {self.uid}) 的投稿视频...")
+        if auto_update_mode:
+            print(f"🔍 正在检查UP主 {username} (UID: {self.uid}) 的新投稿视频...")
+        else:
+            print(f"🔍 正在获取UP主 {username} (UID: {self.uid}) 的投稿视频...")
         videos = await self._fetch_videos_from_api()
 
         # 如果CSV存在，合并新旧数据
@@ -1022,6 +1039,21 @@ class UploaderVideoManager:
 
         # 保存到CSV
         await self._save_videos_to_csv(videos)
+
+        # 如果是自动更新模式，只返回需要下载的视频（未下载的）
+        if auto_update_mode:
+            undownloaded_videos = [v for v in videos if v.get('downloaded', '').lower() != 'true']
+            downloaded_count = len(videos) - len(undownloaded_videos)
+            
+            print(f"📊 UP主视频统计:")
+            print(f"   📺 总视频数: {len(videos)}")
+            print(f"   ✅ 已下载: {downloaded_count}")
+            print(f"   ⏳ 待下载: {len(undownloaded_videos)}")
+            
+            if len(undownloaded_videos) == 0:
+                print(f"🎉 所有视频都已下载完成！")
+            
+            return undownloaded_videos
 
         return videos
 
@@ -2742,6 +2774,58 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             print(f"⚠️ XML转ASS失败，保存原始XML: {e}")
             return f"# ASS转换失败，原始XML内容：\n# {str(e)}\n\n" + xml_content
 
+    async def _validate_strict_mode(self) -> bool:
+        """验证严格模式设置"""
+        vip_strict = self.task_config.get('vip_strict', self.config.vip_strict)
+        login_strict = self.task_config.get('login_strict', self.config.login_strict)
+
+        if vip_strict or login_strict:
+            self._print_if_not_silent(f"🔒 正在进行严格验证...")
+            if vip_strict:
+                self._print_if_not_silent(f"    🎖️ 检查大会员状态")
+            if login_strict:
+                self._print_if_not_silent(f"    👤 检查登录状态")
+
+            return await self.validate_user_info_strict(
+                check_vip=vip_strict,
+                check_login=login_strict
+            )
+        return True
+
+    async def validate_user_info_strict(self, check_vip: bool = False, check_login: bool = False) -> bool:
+        """严格验证用户信息"""
+        try:
+            if not self.config.sessdata:
+                self._print_if_not_silent("❌ 严格验证失败：未提供sessdata")
+                if check_login:
+                    self._print_if_not_silent("💡 提示：请提供有效的sessdata，或关闭 --login-strict 参数")
+                return False
+
+            async with BilibiliAPIClient(self.config.sessdata) as client:
+                user_info = await client.get_user_info()
+
+                if not user_info:
+                    self._print_if_not_silent("❌ 严格验证失败：无法获取用户信息")
+                    return False
+
+                # 检查登录状态
+                if check_login and not user_info.get("is_login", False):
+                    self._print_if_not_silent("❌ 严格验证失败：用户未登录")
+                    self._print_if_not_silent("💡 提示：请确保sessdata有效且用户已登录，或关闭 --login-strict 参数")
+                    return False
+
+                # 检查大会员状态
+                if check_vip and not user_info.get("vip_status", False):
+                    self._print_if_not_silent("❌ 严格验证失败：用户不是大会员")
+                    self._print_if_not_silent("💡 提示：请确保账号是有效的大会员，或关闭 --vip-strict 参数")
+                    return False
+
+                return True
+
+        except Exception as e:
+            self._print_if_not_silent(f"❌ 验证用户信息时出错: {e}")
+            return False
+
 
 class YuttoPlus:
     """主下载器类"""
@@ -2865,24 +2949,6 @@ class YuttoPlus:
         except Exception as e:
             print(f"❌ 验证用户信息时出错: {e}")
             return False
-
-    async def _validate_strict_mode(self) -> bool:
-        """验证严格模式设置"""
-        vip_strict = self.task_config.get('vip_strict', self.config.vip_strict)
-        login_strict = self.task_config.get('login_strict', self.config.login_strict)
-
-        if vip_strict or login_strict:
-            self._print_if_not_silent(f"🔒 正在进行严格验证...")
-            if vip_strict:
-                self._print_if_not_silent(f"    🎖️ 检查大会员状态")
-            if login_strict:
-                self._print_if_not_silent(f"    👤 检查登录状态")
-
-            return await self.validate_user_info_strict(
-                check_vip=vip_strict,
-                check_login=login_strict
-            )
-        return True
 
     def extract_video_id(self, url: str) -> Optional[str]:
         """从URL中提取视频ID（BV号或AV号）"""

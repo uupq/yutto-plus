@@ -42,7 +42,7 @@ login_strict: false   # 启用严格登录验证，未登录时停止下载
 # === 登录设置（可选）===
 # 请填入你的B站SESSDATA，用于下载高清视频和大会员内容
 # 获取方法: 登录B站 -> F12开发者工具 -> Application -> Cookies -> SESSDATA
-sessdata: "7d154532%2C1764692576%2Cfb0f4%2A62CjBg7hHFomq_sN3w-MmOcc6yiY42zIF_b1tUe-Mb5swBu8TvC47UFEgNThibrKiert8SVnprbUFsdk4wYTBFUVl1X0JoeUJSeW5kVndzMmhVYnZ1Z3Z5LURocWVjUlV6Y1ozNGNhX3F1Ujg1cjJQRTEwUFVZT25uandGVFdldE5EMjZuczlkNWFnIIEC"
+sessdata: "2cd08806%2C1765983164%2Ca1be6%2A62CjA6zCyinTbfVPaotT-M6TboiuE_K-BcA61Dk7SD29xcz8OBx4SD6Feg52Kj8b8UhJ8SVjg3RVpCS180VDZQUXYxT2JwbTZXM09GOFozR0FaS01sYTZOYUpqN1E5N0RoWjljSFJCWGRmYVBnY1B1Qy1QTkZnNEZjU0Y4YU56V2txMENyYmZ0bGJRIIEC"
 
 # === 配置说明 ===
 # 画质对照表:
