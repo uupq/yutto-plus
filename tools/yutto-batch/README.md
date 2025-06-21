@@ -65,7 +65,9 @@ python main.py <URL> [选项]
 
 ### 命令行参数
 - `-c, --cookie COOKIE` - B站登录Cookie (SESSDATA)
-- `-o, --output DIR` - 输出目录 (默认: ./downloads)
+- `-o, --output DIR` - 输出目录 (默认: ~/Downloads)
+- `--update` - 更新模式：扫描输出目录下所有任务并检查更新
+- `--vip-strict` - 启用严格VIP模式（传递给yutto）
 - `--debug` - 启用调试模式
 - 其他yutto参数 - 会直接传递给yutto命令
 
@@ -104,6 +106,18 @@ python main.py "https://www.bilibili.com/video/BV1xx411c7mD" \
   --debug
 ```
 
+#### 6. 批量更新所有任务
+```bash
+python main.py --update -c "your_sessdata_cookie" -o "/path/to/downloads"
+```
+
+#### 7. 使用VIP严格模式
+```bash
+python main.py "https://www.bilibili.com/video/BV1xx411c7mD" \
+  -c "your_sessdata_cookie" \
+  --vip-strict
+```
+
 ## 断点续传机制
 
 ### 工作原理
@@ -111,6 +125,27 @@ python main.py "https://www.bilibili.com/video/BV1xx411c7mD" \
 2. **状态跟踪** - 每完成一个视频下载，立即更新CSV文件
 3. **中断恢复** - 重新运行相同命令时，自动从CSV加载未完成的任务
 4. **增量更新** - 检测到新增视频时，只下载新的内容
+
+## 批量更新功能
+
+### 工作原理
+使用`--update`参数可以一次性更新所有下载任务：
+
+1. **自动扫描** - 扫描输出目录下的所有一级子目录
+2. **识别任务** - 通过CSV文件识别已存在的下载任务  
+3. **提取URL** - 从CSV文件第一行读取原始下载URL
+4. **批量更新** - 对每个任务执行完整的更新检查流程
+5. **增量下载** - 只下载新增的视频内容
+
+### 使用场景
+- **定期更新** - 定期检查收藏夹、个人空间等是否有新增视频
+- **批量维护** - 一次性更新所有下载任务，无需逐个检查
+- **自动化** - 可以配合定时任务实现自动更新
+
+### 注意事项
+- 确保CSV文件完整且包含原始URL信息
+- 更新过程中保持网络连接稳定
+- 大量任务更新时建议在网络空闲时进行
 
 ### CSV文件格式
 CSV文件保存在任务目录下，格式为 `YY-MM-DD-HH-MM.csv`：

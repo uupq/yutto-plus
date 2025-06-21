@@ -74,8 +74,9 @@ class BatchDownloader:
                         
                         if new_video_urls:
                             Logger.info(f"发现 {len(new_video_urls)} 个新增视频，更新CSV文件")
-                            # 更新CSV文件
-                            self.csv_manager.save_video_list(current_videos, self.original_url)
+                            # 更新CSV文件（保持现有下载状态）
+                            update_url = self.original_url or url
+                            self.csv_manager.update_video_list(current_videos, update_url)
                             # 只下载新增的视频
                             videos_to_download = [v for v in current_videos if v['avid'].to_url() in new_video_urls]
                         else:
@@ -125,12 +126,16 @@ class BatchDownloader:
                 if original_url:
                     Logger.info(f"发现任务URL: {original_url}")
                     try:
-                        # 临时设置任务目录为输出目录，这样下载器会在正确的位置创建任务目录
-                        temp_output_dir = self.output_dir
-                        self.output_dir = temp_output_dir
+                        # 创建临时下载器，专门用于这个任务的更新
+                        task_downloader = BatchDownloader(
+                            output_dir=self.output_dir,
+                            sessdata=self.sessdata,
+                            extra_args=self.extra_args,
+                            original_url=original_url
+                        )
                         
                         # 执行批量下载流程（会自动处理更新逻辑）
-                        await self.download_from_url(original_url)
+                        await task_downloader.download_from_url(original_url)
                         updated_count += 1
                         
                     except Exception as e:

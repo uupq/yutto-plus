@@ -36,11 +36,13 @@ Yutto-Batch - 精简版B站批量下载工具
     -o, --output DIR    指定下载目录 (默认: ~/Downloads)
     -c, --cookie STR    设置SESSDATA cookie
     --update            更新模式：扫描输出目录下所有任务并检查更新
+    --vip-strict        启用严格VIP模式（传递给yutto）
     
 示例:
     python main.py "https://www.bilibili.com/video/BV1xx411c7mD"
     python main.py "https://space.bilibili.com/123456/favlist?fid=789012" -o ./my_downloads
     python main.py --update -c "cookie" -o "/path/to/downloads"
+    python main.py "https://www.bilibili.com/video/BV1xx411c7mD" --vip-strict
 """
     print(help_text)
 
@@ -73,6 +75,10 @@ def parse_args():
             elif args[i] in ['-c', '--cookie'] and i + 1 < len(args):
                 sessdata = args[i + 1]
                 i += 2
+            elif args[i] == '--vip-strict':
+                # 将vip-strict参数传递给yutto
+                extra_args.append('--vip-strict')
+                i += 1
             else:
                 # 未识别的参数传递给yutto
                 extra_args.append(args[i])
@@ -92,6 +98,10 @@ def parse_args():
             elif args[i] in ['-c', '--cookie'] and i + 1 < len(args):
                 sessdata = args[i + 1]
                 i += 2
+            elif args[i] == '--vip-strict':
+                # 将vip-strict参数传递给yutto
+                extra_args.append('--vip-strict')
+                i += 1
             else:
                 # 未识别的参数传递给yutto
                 extra_args.append(args[i])

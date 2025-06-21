@@ -65,7 +65,7 @@ class CSVManager:
         return latest_file
     
     def save_video_list(self, videos: List[VideoInfo], original_url: Optional[str] = None) -> Path:
-        """保存视频列表到CSV文件"""
+        """保存视频列表到CSV文件（仅用于新任务）"""
         csv_filename = self._generate_csv_filename()
         csv_path = self.task_dir / csv_filename
         temp_path = self.task_dir / f"temp_{csv_filename}"
@@ -112,6 +112,86 @@ class CSVManager:
             if temp_path.exists():
                 temp_path.unlink()
             Logger.error(f"保存CSV文件失败: {e}")
+            raise
+    
+    def update_video_list(self, new_videos: List[VideoInfo], original_url: str) -> Path:
+        """更新现有的视频列表，合并新视频并保持已下载状态"""
+        current_csv = self._find_latest_csv()
+        
+        if current_csv is None:
+            # 如果没有现有CSV，直接创建新的
+            return self.save_video_list(new_videos, original_url)
+        
+        try:
+            # 读取现有数据
+            existing_videos = self.load_video_list()
+            if existing_videos is None:
+                existing_videos = []
+            
+            # 创建现有视频的URL映射（保留下载状态）
+            existing_video_map = {video['video_url']: video for video in existing_videos}
+            
+            # 生成新的CSV文件名（带时间戳）
+            new_csv_filename = self._generate_csv_filename()
+            new_csv_path = self.task_dir / new_csv_filename
+            temp_path = self.task_dir / f"temp_{new_csv_filename}"
+            
+            # 合并视频列表
+            merged_videos = []
+            
+            # 处理新视频列表
+            for video in new_videos:
+                video_url = video['avid'].to_url()
+                
+                if video_url in existing_video_map:
+                    # 已存在的视频，保持原有下载状态
+                    existing_data = existing_video_map[video_url]
+                    merged_videos.append(existing_data)
+                else:
+                    # 新增的视频，设置为未下载
+                    pubdate_unix = video.get('pubdate', 0)
+                    if pubdate_unix:
+                        pubdate_str = datetime.fromtimestamp(pubdate_unix).strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        pubdate_str = "未知"
+                    
+                    merged_videos.append({
+                        'video_url': video_url,
+                        'title': video['title'],
+                        'name': video['name'],
+                        'download_path': str(video['path']),
+                        'downloaded': 'False',
+                        'avid': str(video['avid']),
+                        'cid': str(video['cid']),
+                        'pubdate': pubdate_str
+                    })
+            
+            # 安全写入新的CSV文件
+            with open(temp_path, 'w', newline='', encoding='utf-8-sig') as f:
+                # 写入原始URL
+                f.write(f"# Original URL: {original_url}\n")
+                
+                if merged_videos:
+                    writer = csv.DictWriter(f, fieldnames=merged_videos[0].keys())
+                    writer.writeheader()
+                    writer.writerows(merged_videos)
+            
+            # 验证写入成功后，替换原文件
+            shutil.move(str(temp_path), str(new_csv_path))
+            
+            # 删除旧的CSV文件
+            if current_csv != new_csv_path:
+                current_csv.unlink()
+                Logger.debug(f"已删除旧CSV文件: {current_csv.name}")
+            
+            Logger.info(f"已更新视频列表到: {new_csv_path}")
+            return new_csv_path
+            
+        except Exception as e:
+            # 清理临时文件
+            if temp_path.exists():
+                temp_path.unlink()
+            Logger.error(f"更新CSV文件失败: {e}")
             raise
     
     def load_video_list(self) -> Optional[List[Dict[str, str]]]:
