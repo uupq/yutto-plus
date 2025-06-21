@@ -25,6 +25,25 @@ class CSVManager:
         self.task_dir = task_dir
         self.task_dir.mkdir(parents=True, exist_ok=True)
     
+    def _detect_csv_encoding(self, file_path: Path) -> str:
+        """智能检测CSV文件编码"""
+        encodings = ['utf-8-sig', 'utf-8', 'gbk', 'gb2312']
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    # 尝试读取前几行
+                    f.readline()
+                    return encoding
+            except UnicodeDecodeError:
+                continue
+            except Exception:
+                continue
+        
+        # 如果都失败了，默认使用utf-8
+        Logger.warning(f"无法检测CSV文件编码，使用默认utf-8: {file_path}")
+        return 'utf-8'
+    
     def _generate_csv_filename(self) -> str:
         """生成基于当前时间的CSV文件名"""
         now = datetime.now()
@@ -52,8 +71,8 @@ class CSVManager:
         temp_path = self.task_dir / f"temp_{csv_filename}"
         
         try:
-            # 先写入临时文件
-            with open(temp_path, 'w', newline='', encoding='utf-8') as f:
+            # 先写入临时文件，使用UTF-8-BOM编码确保Excel正确识别
+            with open(temp_path, 'w', newline='', encoding='utf-8-sig') as f:
                 # 第一行写入原始URL（如果提供）
                 if original_url:
                     f.write(f"# Original URL: {original_url}\n")
@@ -103,8 +122,11 @@ class CSVManager:
             return None
         
         try:
+            # 智能检测文件编码
+            encoding = self._detect_csv_encoding(csv_path)
+            
             videos = []
-            with open(csv_path, 'r', encoding='utf-8') as f:
+            with open(csv_path, 'r', encoding=encoding) as f:
                 # 跳过第一行的原始URL（如果存在）
                 first_line = f.readline()
                 if not first_line.startswith("# Original URL:"):
@@ -146,10 +168,13 @@ class CSVManager:
             return
         
         try:
+            # 智能检测文件编码
+            encoding = self._detect_csv_encoding(current_csv)
+            
             # 读取现有数据
             videos = []
             url_line = None
-            with open(current_csv, 'r', encoding='utf-8') as f:
+            with open(current_csv, 'r', encoding=encoding) as f:
                 # 检查第一行是否为原始URL
                 first_line = f.readline()
                 if first_line.startswith("# Original URL:"):
@@ -169,8 +194,8 @@ class CSVManager:
             new_csv_path = self.task_dir / new_csv_filename
             temp_path = self.task_dir / f"temp_{new_csv_filename}"
             
-            # 先写入临时文件
-            with open(temp_path, 'w', newline='', encoding='utf-8') as f:
+            # 先写入临时文件，使用UTF-8-BOM编码确保Excel正确识别
+            with open(temp_path, 'w', newline='', encoding='utf-8-sig') as f:
                 # 写入原始URL行（如果存在）
                 if url_line:
                     f.write(url_line)
@@ -221,7 +246,10 @@ class CSVManager:
             return None
         
         try:
-            with open(csv_path, 'r', encoding='utf-8') as f:
+            # 智能检测文件编码
+            encoding = self._detect_csv_encoding(csv_path)
+            
+            with open(csv_path, 'r', encoding=encoding) as f:
                 first_line = f.readline().strip()
                 if first_line.startswith("# Original URL:"):
                     return first_line[15:].strip()  # 去掉"# Original URL:"前缀
