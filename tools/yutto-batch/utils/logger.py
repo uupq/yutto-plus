@@ -4,13 +4,30 @@
 
 import sys
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Callable, Optional
 
 LogLevel = Literal["INFO", "WARNING", "ERROR", "DEBUG"]
 
 
 class Logger:
     """简化版日志器"""
+    
+    # 全局回调函数，用于WebUI等场景
+    _callback: Optional[Callable] = None
+    
+    @classmethod
+    def set_callback(cls, callback: Optional[Callable]):
+        """设置日志回调函数"""
+        cls._callback = callback
+    
+    @classmethod
+    def _send_to_callback(cls, level: str, message: str, category: Optional[str] = None):
+        """发送日志到回调函数"""
+        if cls._callback:
+            try:
+                cls._callback(level, message, category)
+            except Exception:
+                pass  # 忽略回调错误，避免影响主程序
     
     @staticmethod
     def _format_message(level: LogLevel, message: str) -> str:
@@ -27,27 +44,32 @@ class Logger:
         color = colors.get(level, "")
         return f"[{timestamp}] {color}{level}{reset}: {message}"
     
-    @staticmethod
-    def info(message: str):
+    @classmethod
+    def info(cls, message: str):
         """输出信息日志"""
-        print(Logger._format_message("INFO", message))
+        print(cls._format_message("INFO", message))
+        cls._send_to_callback("info", message)
     
-    @staticmethod
-    def warning(message: str):
+    @classmethod
+    def warning(cls, message: str):
         """输出警告日志"""
-        print(Logger._format_message("WARNING", message))
+        print(cls._format_message("WARNING", message))
+        cls._send_to_callback("warning", message)
     
-    @staticmethod
-    def error(message: str):
+    @classmethod
+    def error(cls, message: str):
         """输出错误日志"""
-        print(Logger._format_message("ERROR", message), file=sys.stderr)
+        print(cls._format_message("ERROR", message), file=sys.stderr)
+        cls._send_to_callback("error", message)
     
-    @staticmethod
-    def debug(message: str):
+    @classmethod
+    def debug(cls, message: str):
         """输出调试日志"""
-        print(Logger._format_message("DEBUG", message))
+        print(cls._format_message("DEBUG", message))
+        cls._send_to_callback("debug", message)
     
-    @staticmethod
-    def custom(title: str, badge: str):
+    @classmethod
+    def custom(cls, title: str, badge: str):
         """输出自定义格式的日志"""
-        print(f"[{badge}] {title}") 
+        print(f"[{badge}] {title}")
+        cls._send_to_callback("custom", title, badge) 

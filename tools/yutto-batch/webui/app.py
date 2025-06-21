@@ -32,70 +32,18 @@ current_tasks: Dict[str, Dict[str, Any]] = {}
 task_counter = 0
 
 
-class WebLogger:
-    """Web界面专用的日志器，发送日志到前端"""
-    
-    @staticmethod
-    def _format_message(level: str, message: str) -> str:
-        """格式化日志消息"""
-        timestamp = time.strftime('%H:%M:%S')
-        return f"[{timestamp}] {level}: {message}"
-    
-    @staticmethod
-    def info(message: str, task_id: Optional[str] = None):
-        formatted = WebLogger._format_message("INFO", message)
-        print(formatted)
+def create_web_logger_callback(task_id: Optional[str] = None):
+    """创建WebLogger回调函数"""
+    def web_logger_callback(level: str, message: str, category: Optional[str] = None):
+        """WebLogger回调函数，发送日志到前端"""
         socketio.emit('log_message', {
-            'level': 'info',
+            'level': level,
             'message': message,
+            'category': category,
             'timestamp': time.strftime('%H:%M:%S'),
             'task_id': task_id
         })
-    
-    @staticmethod
-    def warning(message: str, task_id: Optional[str] = None):
-        formatted = WebLogger._format_message("WARNING", message)
-        print(formatted)
-        socketio.emit('log_message', {
-            'level': 'warning',
-            'message': message,
-            'timestamp': time.strftime('%H:%M:%S'),
-            'task_id': task_id
-        })
-    
-    @staticmethod
-    def error(message: str, task_id: Optional[str] = None):
-        formatted = WebLogger._format_message("ERROR", message)
-        print(formatted)
-        socketio.emit('log_message', {
-            'level': 'error', 
-            'message': message,
-            'timestamp': time.strftime('%H:%M:%S'),
-            'task_id': task_id
-        })
-    
-    @staticmethod
-    def debug(message: str, task_id: Optional[str] = None):
-        formatted = WebLogger._format_message("DEBUG", message)
-        print(formatted)
-        socketio.emit('log_message', {
-            'level': 'debug',
-            'message': message,
-            'timestamp': time.strftime('%H:%M:%S'),
-            'task_id': task_id
-        })
-    
-    @staticmethod
-    def custom(title: str, badge: str, task_id: Optional[str] = None):
-        formatted = f"[{badge}] {title}"
-        print(formatted)
-        socketio.emit('log_message', {
-            'level': 'custom',
-            'message': title,
-            'category': badge,
-            'timestamp': time.strftime('%H:%M:%S'),
-            'task_id': task_id
-        })
+    return web_logger_callback
 
 
 @app.route('/')
@@ -228,10 +176,8 @@ def start_download():
             current_tasks[task_id]['status'] = 'running'
             socketio.emit('task_update', current_tasks[task_id])
             
-            # 替换Logger为WebLogger
-            import utils.logger
-            original_logger = utils.logger.Logger
-            utils.logger.Logger = WebLogger
+            # 设置Logger回调以捕获所有日志
+            Logger.set_callback(create_web_logger_callback(task_id))
             
             # 创建下载器并执行
             downloader = BatchDownloader(
@@ -249,15 +195,15 @@ def start_download():
             
             current_tasks[task_id]['status'] = 'completed'
             current_tasks[task_id]['progress'] = 100
-            WebLogger.custom(f"任务 {task_id} 下载完成", "任务管理", task_id)
+            Logger.custom(f"任务 {task_id} 下载完成", "任务管理")
             
         except Exception as e:
             current_tasks[task_id]['status'] = 'error'
             current_tasks[task_id]['error'] = str(e)
-            WebLogger.error(f"任务 {task_id} 失败: {e}", task_id)
+            Logger.error(f"任务 {task_id} 失败: {e}")
         finally:
-            # 恢复原始Logger
-            utils.logger.Logger = original_logger
+            # 清除Logger回调
+            Logger.set_callback(None)
             socketio.emit('task_update', current_tasks[task_id])
     
     thread = threading.Thread(target=run_download)
@@ -309,10 +255,8 @@ def start_update_all():
             current_tasks[task_id]['status'] = 'running'
             socketio.emit('task_update', current_tasks[task_id])
             
-            # 替换Logger为WebLogger
-            import utils.logger
-            original_logger = utils.logger.Logger
-            utils.logger.Logger = WebLogger
+            # 设置Logger回调以捕获所有日志
+            Logger.set_callback(create_web_logger_callback(task_id))
             
             # 创建下载器并执行批量更新
             downloader = BatchDownloader(
@@ -330,15 +274,15 @@ def start_update_all():
             
             current_tasks[task_id]['status'] = 'completed'
             current_tasks[task_id]['progress'] = 100
-            WebLogger.custom(f"批量更新任务 {task_id} 完成", "任务管理", task_id)
+            Logger.custom(f"批量更新任务 {task_id} 完成", "任务管理")
             
         except Exception as e:
             current_tasks[task_id]['status'] = 'error'
             current_tasks[task_id]['error'] = str(e)
-            WebLogger.error(f"批量更新任务 {task_id} 失败: {e}", task_id)
+            Logger.error(f"批量更新任务 {task_id} 失败: {e}")
         finally:
-            # 恢复原始Logger
-            utils.logger.Logger = original_logger
+            # 清除Logger回调
+            Logger.set_callback(None)
             socketio.emit('task_update', current_tasks[task_id])
     
     thread = threading.Thread(target=run_update)

@@ -281,11 +281,33 @@ class BatchDownloader:
         try:
             Logger.debug(f"执行命令: {' '.join(yutto_cmd)}")
             
-            # 执行yutto命令，直接显示输出而不捕获
+            # 执行yutto命令，捕获输出并实时转发到Logger
             process = await asyncio.create_subprocess_exec(
                 *yutto_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=Path(__file__).parent
             )
+            
+            # 实时读取和转发输出
+            if process.stdout:
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    
+                    # 解码输出并发送到Logger
+                    output = line.decode('utf-8', errors='ignore').strip()
+                    if output:
+                        # 根据输出内容判断日志级别
+                        if 'error' in output.lower() or 'failed' in output.lower():
+                            Logger.error(f"[yutto] {output}")
+                        elif 'warning' in output.lower() or 'warn' in output.lower():
+                            Logger.warning(f"[yutto] {output}")
+                        elif 'downloading' in output.lower() or 'progress' in output.lower() or '%' in output:
+                            Logger.custom(output, "下载进度")
+                        else:
+                            Logger.info(f"[yutto] {output}")
             
             # 等待进程完成
             return_code = await process.wait()
