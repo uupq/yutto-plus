@@ -6,6 +6,7 @@ import asyncio
 import subprocess
 import sys
 import shutil
+import glob
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -100,6 +101,49 @@ class BatchDownloader:
             except Exception as e:
                 Logger.error(f"批量下载失败: {e}")
                 raise
+    
+    async def update_all_tasks(self) -> None:
+        """更新所有任务：扫描输出目录下的所有任务并检查更新"""
+        try:
+            # 扫描所有一级子目录
+            task_dirs = [d for d in self.output_dir.iterdir() if d.is_dir()]
+            
+            if not task_dirs:
+                Logger.info("未找到任何任务目录")
+                return
+            
+            Logger.info(f"发现 {len(task_dirs)} 个任务目录")
+            
+            updated_count = 0
+            for task_dir in task_dirs:
+                Logger.info(f"检查任务目录: {task_dir.name}")
+                
+                # 查找CSV文件
+                csv_manager = CSVManager(task_dir)
+                original_url = csv_manager.get_original_url()
+                
+                if original_url:
+                    Logger.info(f"发现任务URL: {original_url}")
+                    try:
+                        # 临时设置任务目录为输出目录，这样下载器会在正确的位置创建任务目录
+                        temp_output_dir = self.output_dir
+                        self.output_dir = temp_output_dir
+                        
+                        # 执行批量下载流程（会自动处理更新逻辑）
+                        await self.download_from_url(original_url)
+                        updated_count += 1
+                        
+                    except Exception as e:
+                        Logger.error(f"更新任务失败 {task_dir.name}: {e}")
+                        continue
+                else:
+                    Logger.warning(f"任务目录 {task_dir.name} 中未找到CSV文件或原始URL")
+            
+            Logger.custom(f"批量更新完成 - 成功更新 {updated_count}/{len(task_dirs)} 个任务", "批量更新")
+            
+        except Exception as e:
+            Logger.error(f"批量更新失败: {e}")
+            raise
     
     async def _download_videos(self, videos: list[VideoInfo], original_url: str) -> None:
         """步骤7: 逐个下载视频"""

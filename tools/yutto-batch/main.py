@@ -19,6 +19,7 @@ Yutto-Batch - 精简版B站批量下载工具
 
 用法:
     python main.py <url> [选项]
+    python main.py --update [选项]
 
 支持的URL类型:
     - 投稿视频: https://www.bilibili.com/video/BV1xx411c7mD
@@ -32,12 +33,14 @@ Yutto-Batch - 精简版B站批量下载工具
 
 选项:
     -h, --help          显示此帮助信息
-    -o, --output DIR    指定下载目录 (默认: ./downloads)
+    -o, --output DIR    指定下载目录 (默认: ~/Downloads)
     -c, --cookie STR    设置SESSDATA cookie
+    --update            更新模式：扫描输出目录下所有任务并检查更新
     
 示例:
     python main.py "https://www.bilibili.com/video/BV1xx411c7mD"
     python main.py "https://space.bilibili.com/123456/favlist?fid=789012" -o ./my_downloads
+    python main.py --update -c "cookie" -o "/path/to/downloads"
 """
     print(help_text)
 
@@ -50,61 +53,99 @@ def parse_args():
         print_help()
         sys.exit(0)
     
-    url = args[0]
-    output_dir = Path("./downloads")
-    sessdata = None
-    extra_args = []
+    # 检查是否是更新模式
+    update_mode = '--update' in args
     
-    i = 1
-    while i < len(args):
-        if args[i] in ['-o', '--output'] and i + 1 < len(args):
-            output_dir = Path(args[i + 1])
-            i += 2
-        elif args[i] in ['-c', '--cookie'] and i + 1 < len(args):
-            sessdata = args[i + 1]
-            i += 2
-        else:
-            # 未识别的参数传递给yutto
-            extra_args.append(args[i])
-            i += 1
+    if update_mode:
+        # 更新模式
+        url = None
+        output_dir = Path("~/Downloads").expanduser()
+        sessdata = None
+        extra_args = []
+        
+        i = 0
+        while i < len(args):
+            if args[i] == '--update':
+                i += 1
+            elif args[i] in ['-o', '--output'] and i + 1 < len(args):
+                output_dir = Path(args[i + 1]).expanduser()
+                i += 2
+            elif args[i] in ['-c', '--cookie'] and i + 1 < len(args):
+                sessdata = args[i + 1]
+                i += 2
+            else:
+                # 未识别的参数传递给yutto
+                extra_args.append(args[i])
+                i += 1
+    else:
+        # 普通下载模式
+        url = args[0]
+        output_dir = Path("./downloads")
+        sessdata = None
+        extra_args = []
+        
+        i = 1
+        while i < len(args):
+            if args[i] in ['-o', '--output'] and i + 1 < len(args):
+                output_dir = Path(args[i + 1])
+                i += 2
+            elif args[i] in ['-c', '--cookie'] and i + 1 < len(args):
+                sessdata = args[i + 1]
+                i += 2
+            else:
+                # 未识别的参数传递给yutto
+                extra_args.append(args[i])
+                i += 1
     
-    return url, output_dir, sessdata, extra_args
+    return url, output_dir, sessdata, extra_args, update_mode
 
 
 async def main():
     """主函数"""
     try:
-        url, output_dir, sessdata, extra_args = parse_args()
-        
-        # 只需要URL用于记录在CSV中
-        original_url = url
+        url, output_dir, sessdata, extra_args, update_mode = parse_args()
         
         # 创建输出目录
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        Logger.info(f"URL: {url}")
-        Logger.info(f"输出目录: {output_dir}")
-        if extra_args:
-            Logger.info(f"额外参数传递给yutto: {' '.join(extra_args)}")
         
         # 创建批量下载器
         downloader = BatchDownloader(
             output_dir=output_dir,
             sessdata=sessdata,
             extra_args=extra_args,
-            original_url=original_url
+            original_url=url
         )
         
-        # 开始批量下载
-        await downloader.download_from_url(url)
+        if update_mode:
+            # 更新模式
+            Logger.info("=== 批量更新模式 ===")
+            Logger.info(f"扫描目录: {output_dir}")
+            if extra_args:
+                Logger.info(f"额外参数传递给yutto: {' '.join(extra_args)}")
+            
+            await downloader.update_all_tasks()
+            
+        else:
+            # 普通下载模式
+            if url is None:
+                Logger.error("普通下载模式需要提供URL")
+                sys.exit(1)
+                
+            Logger.info(f"URL: {url}")
+            Logger.info(f"输出目录: {output_dir}")
+            if extra_args:
+                Logger.info(f"额外参数传递给yutto: {' '.join(extra_args)}")
+            
+            # 开始批量下载
+            await downloader.download_from_url(url)
         
-        Logger.info("下载完成！")
+        Logger.info("任务完成！")
         
     except KeyboardInterrupt:
-        Logger.info("用户中断下载")
+        Logger.info("用户中断操作")
         sys.exit(1)
     except Exception as e:
-        Logger.error(f"下载失败: {e}")
+        Logger.error(f"操作失败: {e}")
         sys.exit(1)
 
 
