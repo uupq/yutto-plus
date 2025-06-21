@@ -76,6 +76,9 @@ async def main():
     try:
         url, output_dir, sessdata, extra_args = parse_args()
         
+        # 只需要URL用于记录在CSV中
+        original_url = url
+        
         # 创建输出目录
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -88,7 +91,8 @@ async def main():
         downloader = BatchDownloader(
             output_dir=output_dir,
             sessdata=sessdata,
-            extra_args=extra_args
+            extra_args=extra_args,
+            original_url=original_url
         )
         
         # 开始批量下载

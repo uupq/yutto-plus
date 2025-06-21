@@ -107,6 +107,7 @@ class VideoInfo(TypedDict):
     cid: CId
     title: str
     path: Path
+    pubdate: int  # 发布时间（Unix时间戳）
 
 
 class VideoListData(TypedDict):

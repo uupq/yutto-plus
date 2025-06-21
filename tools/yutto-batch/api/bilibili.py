@@ -27,6 +27,7 @@ async def get_ugc_video_list(fetcher: Fetcher, avid: AvId) -> VideoListData:
     """获取投稿视频分P列表"""
     video_info = await get_ugc_video_info(fetcher, avid)
     video_title = video_info["title"]
+    video_pubdate = video_info.get("pubdate", 0)  # 获取发布时间，默认为0
     
     # 获取分P列表
     list_api = "https://api.bilibili.com/x/player/pagelist?aid={aid}&bvid={bvid}&jsonp=jsonp"
@@ -48,6 +49,7 @@ async def get_ugc_video_list(fetcher: Fetcher, avid: AvId) -> VideoListData:
             "avid": BvId(video_info["bvid"]) if video_info.get("bvid") else AId(str(video_info["aid"])),
             "cid": CId(str(item["cid"])),
             "title": video_title,
+            "pubdate": video_pubdate,  # 添加发布时间
             "path": Path(f"{video_title}/{part_name}")
         })
     
