@@ -1,0 +1,18 @@
+# Yutto-Batch 默认配置文件
+name: "默认配置"
+description: "基础下载配置"
+
+# 基本设置
+output_dir: "/Volumes/DataCenter/多媒体资料/短视频-收藏夹test1"
+sessdata: "2cd08806%2C1765983164%2Ca1be6%2A62CjA6zCyinTbfVPaotT-M6TboiuE_K-BcA61Dk7SD29xcz8OBx4SD6Feg52Kj8b8UhJ8SVjg3RVpCS180VDZQUXYxT2JwbTZXM09GOFozR0FaS01sYTZOYUpqN1E5N0RoWjljSFJCWGRmYVBnY1B1Qy1QTkZnNEZjU0Y4YU56V2txMENyYmZ0bGJRIIEC"
+
+# 下载选项
+vip_strict: true
+debug: false
+
+# 其他yutto参数
+extra_args: []
+
+# 创建时间
+created_at: "2024-01-01"
+updated_at: "2024-01-01" 

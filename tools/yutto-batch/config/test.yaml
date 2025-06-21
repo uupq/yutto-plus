@@ -1,0 +1,20 @@
+# 测试配置
+name: "测试配置"
+description: "用于测试的配置文件"
+
+# 基本设置
+output_dir: "~/Downloads/Test"
+sessdata: ""
+
+# 下载选项
+vip_strict: false
+debug: true
+
+# 其他yutto参数
+extra_args:
+  - "--quality"
+  - "720P"
+
+# 创建时间
+created_at: "2024-01-01"
+updated_at: "2024-01-01" 

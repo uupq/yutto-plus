@@ -10,6 +10,7 @@ from pathlib import Path
 
 from batch_downloader import BatchDownloader
 from utils.logger import Logger
+from utils.config_manager import ConfigManager
 
 
 def print_help():
@@ -35,6 +36,7 @@ Yutto-Batch - 精简版B站批量下载工具
     -h, --help          显示此帮助信息
     -o, --output DIR    指定下载目录 (默认: ~/Downloads)
     -c, --cookie STR    设置SESSDATA cookie
+    --config NAME       使用指定的配置文件 (不含.yaml扩展名)
     --update            更新模式：扫描输出目录下所有任务并检查更新
     --vip-strict        启用严格VIP模式（传递给yutto）
     
@@ -43,6 +45,7 @@ Yutto-Batch - 精简版B站批量下载工具
     python main.py "https://space.bilibili.com/123456/favlist?fid=789012" -o ./my_downloads
     python main.py --update -c "cookie" -o "/path/to/downloads"
     python main.py "https://www.bilibili.com/video/BV1xx411c7mD" --vip-strict
+    python main.py "https://www.bilibili.com/video/BV1xx411c7mD" --config vip
 """
     print(help_text)
 
@@ -55,15 +58,42 @@ def parse_args():
         print_help()
         sys.exit(0)
     
+    # 检查是否使用配置文件
+    config_name = None
+    config_manager = ConfigManager()
+    
+    # 先检查是否有--config参数
+    if '--config' in args:
+        config_index = args.index('--config')
+        if config_index + 1 < len(args):
+            config_name = args[config_index + 1]
+            # 移除--config参数
+            args = args[:config_index] + args[config_index + 2:]
+    
+    # 加载配置文件
+    config_data = {}
+    if config_name:
+        config_data = config_manager.get_config_for_download(config_name) or {}
+        if not config_data:
+            Logger.error(f"无法加载配置文件: {config_name}")
+            sys.exit(1)
+        Logger.info(f"使用配置文件: {config_name}")
+    
     # 检查是否是更新模式
     update_mode = '--update' in args
     
     if update_mode:
         # 更新模式
         url = None
-        output_dir = Path("~/Downloads").expanduser()
-        sessdata = None
-        extra_args = []
+        output_dir = Path(config_data.get('output_dir', '~/Downloads')).expanduser()
+        sessdata = config_data.get('sessdata', None)
+        extra_args = config_data.get('extra_args', []).copy()
+        
+        # 添加配置文件中的选项
+        if config_data.get('vip_strict', False):
+            extra_args.append('--vip-strict')
+        if config_data.get('debug', False):
+            extra_args.append('--debug')
         
         i = 0
         while i < len(args):
@@ -86,9 +116,15 @@ def parse_args():
     else:
         # 普通下载模式
         url = args[0]
-        output_dir = Path("./downloads")
-        sessdata = None
-        extra_args = []
+        output_dir = Path(config_data.get('output_dir', './downloads'))
+        sessdata = config_data.get('sessdata', None)
+        extra_args = config_data.get('extra_args', []).copy()
+        
+        # 添加配置文件中的选项
+        if config_data.get('vip_strict', False):
+            extra_args.append('--vip-strict')
+        if config_data.get('debug', False):
+            extra_args.append('--debug')
         
         i = 1
         while i < len(args):

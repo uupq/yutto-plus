@@ -1,0 +1,20 @@
+# VIP会员配置
+name: "VIP会员配置"
+description: "高质量VIP内容下载"
+
+# 基本设置
+output_dir: "~/Downloads/VIP"
+sessdata: "your_sessdata_here"
+
+# 下载选项
+vip_strict: true
+debug: false
+
+# 其他yutto参数
+extra_args:
+  - "--quality"
+  - "8K"
+
+# 创建时间
+created_at: "2024-01-01"
+updated_at: "2024-01-01" 

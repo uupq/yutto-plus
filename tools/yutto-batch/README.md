@@ -49,6 +49,27 @@ pip install yutto
 pip install -r requirements.txt
 ```
 
+### 配置文件系统
+
+支持YAML格式的配置文件，位于`config/`目录：
+
+- `default.yaml` - 默认配置（不可删除，仅可修改）
+- `vip.yaml` - VIP会员配置示例
+- 可创建自定义配置文件
+
+#### 配置文件格式
+```yaml
+name: "配置名称"
+description: "配置描述"
+output_dir: "~/Downloads"
+sessdata: "your_sessdata_here"
+vip_strict: true
+debug: false
+extra_args:
+  - "--quality"
+  - "8K"
+```
+
 ### 项目结构
 ```
 yutto-batch/
@@ -75,6 +96,7 @@ python main.py <URL> [选项]
 ### 命令行参数
 - `-c, --cookie COOKIE` - B站登录Cookie (SESSDATA)
 - `-o, --output DIR` - 输出目录 (默认: ~/Downloads)
+- `--config NAME` - 使用指定的配置文件 (不含.yaml扩展名)
 - `--update` - 更新模式：扫描输出目录下所有任务并检查更新
 - `--vip-strict` - 启用严格VIP模式（传递给yutto）
 - `--debug` - 启用调试模式
@@ -125,6 +147,18 @@ python main.py --update -c "your_sessdata_cookie" -o "/path/to/downloads"
 python main.py "https://www.bilibili.com/video/BV1xx411c7mD" \
   -c "your_sessdata_cookie" \
   --vip-strict
+```
+
+#### 8. 使用配置文件
+```bash
+# 使用默认配置
+python main.py "https://www.bilibili.com/video/BV1xx411c7mD" --config default
+
+# 使用VIP配置
+python main.py "https://www.bilibili.com/video/BV1xx411c7mD" --config vip
+
+# 使用自定义配置
+python main.py "https://www.bilibili.com/video/BV1xx411c7mD" --config my_config
 ```
 
 ## 断点续传机制
